@@ -9,28 +9,37 @@ pas listé ici est HORS V1.
 Le rôle est stocké en base (table `app_user`). Le premier admin est inséré par migration.
 
 ## Authentification
-- SSO OIDC avec l'adresse mail pro (fournisseur : [Microsoft Entra ID | Google Workspace] — À CHOISIR).
+- SSO OIDC avec l'adresse mail pro (fournisseur : Microsoft Entra ID ).
 - Seuls les emails du domaine `@[DOMAINE]` sont acceptés.
 - Premier login → création automatique du user en EMPLOYEE.
 - Profil `dev` : login simulé, sans SSO.
 
 ## Fonctionnalités V1
 ### 1. Planning (tous)
-- Vue semaine / mois de tous les employés (FullCalendar, une ligne ou une couleur par personne).
+- Vue semaine / mois de tous les employés (FullCalendar, une couleur par personne avec son nom prénom apparent).
 - Affiche : créneaux de travail + congés approuvés.
-- ADMIN : crée / modifie / supprime des créneaux (date, début, fin, type : BUREAU | TELETRAVAIL).
+- ADMIN : crée / modifie / supprime des créneaux (date, début, fin).
 
-### 2. Demandes de congés
-- Champs : type (CP | RTT | SANS_SOLDE), date début, date fin, demi-journée début/fin, commentaire.
-- Statuts : PENDING → APPROVED | REJECTED (par un admin, commentaire optionnel) ; PENDING → CANCELLED (par le demandeur).
-- Règles : date fin ≥ date début ; pas de chevauchement avec une autre demande PENDING/APPROVED ;
-  nombre de jours ouvrés calculé (hors week-ends et jours fériés français).
-- Solde CP / RTT par employé et par année, saisi par l'admin, décrémenté à l'approbation.
+Tout se compte en HEURES (pas de jours).
+Workflow commun à toutes les demandes : PENDING → APPROVED | REJECTED (par un admin, commentaire optionnel) ; PENDING → CANCELLED (par le demandeur).
 
-### 3. Heures supplémentaires
+
+### 2. Déclarer des heures supplémentaires (alimente le solde)
 - Champs : date, nombre d'heures (pas de 0,25), motif.
-- Même workflow de statuts que les congés.
-- Vue perso : total d'heures approuvées par mois.
+- Une fois APPROVED, les heures sont ajoutées au solde de l'employé.
+
+### 3. Poser une absence (2 types)
+- Champs : type (RECUP_HEURES_SUP | SANS_SOLDE), date début, date fin, nombre d'heures (pas de 0,25), commentaire.
+- RECUP_HEURES_SUP : consomme le solde d'heures sup.
+  À la création, refuser si nombre d'heures > solde disponible
+  (solde disponible = solde − heures des demandes de récup PENDING).
+- SANS_SOLDE : aucun impact sur le solde.
+- Règles : date fin ≥ date début ; pas de chevauchement avec une autre absence PENDING/APPROVED.
+
+### Solde d'heures sup
+- Solde = Σ heures sup APPROVED − Σ récup APPROVED + ajustements admin.
+- L'admin peut saisir un ajustement (+/− heures, motif), ex. reprise du solde existant au démarrage.
+- Vue perso : solde actuel + historique des mouvements (heures sup, récup, ajustements).
 
 ### 4. Notifications email
 - Demande créée → mail aux admins.
@@ -39,10 +48,6 @@ Le rôle est stocké en base (table `app_user`). Le premier admin est inséré p
 
 ## Écrans
 - `/planning` — planning de tous (page d'accueil)
-- `/mes-demandes` — mes congés + heures sup, soldes, boutons « Nouvelle demande »
+- `/mes-demandes` — mes heures sup + absences, solde d'heures et historique, boutons « Déclarer des heures » / « Poser une absence »
 - `/admin/validations` — demandes PENDING, accepter/refuser
-- `/admin/plannings` — édition des créneaux et des soldes
-
-## Hors V1 (plus tard)
-Export Excel/paie, fichier .ics, multi-équipes / managers par équipe, demi-journées dans le planning,
-historique d'audit détaillé, application mobile.
+- `/admin/plannings` — édition des créneaux + ajustements de solde
