@@ -1,0 +1,19 @@
+spring:
+  config:
+    # .env à la racine du repo (lancement depuis la racine ou depuis backend/)
+    import: optional:file:.env[.properties],optional:file:../.env[.properties]
+  datasource:
+    url: jdbc:postgresql://localhost:5432/${POSTGRES_DB}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+  mail:
+    host: localhost
+    port: 1025
+  flyway:
+    locations: classpath:db/migration,classpath:db/dev
+    placeholders:
+      initialAdminEmail: admin@exemple.fr
+
+app:
+  auth:
+    allowed-domain: exemple.fr

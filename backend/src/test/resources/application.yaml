@@ -1,0 +1,17 @@
+# Surcharge de test : la datasource vient de Testcontainers (@ServiceConnection).
+spring:
+  flyway:
+    placeholders:
+      initialAdminEmail: admin@exemple.fr
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          # jamais appelé : les tests utilisent le post-processor jwt()
+          jwk-set-uri: http://localhost:0/unused
+  mail:
+    host: localhost
+
+app:
+  auth:
+    allowed-domain: exemple.fr

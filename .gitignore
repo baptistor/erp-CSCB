@@ -1,5 +1,6 @@
 .env
 .env.*
+!.env.example
 **/application-prod.yml
 
 .claude/settings.local.json
