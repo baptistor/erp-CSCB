@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(./mvnw *)",
+      "Bash(cd backend && ./mvnw *)",
+      "Bash(npm run *)",
+      "Bash(npm test*)",
+      "Bash(npm install*)",
+      "Bash(npx ng *)",
+      "Bash(docker compose *)",
+      "Bash(git status)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./backend/src/main/resources/application-prod.yml)",
+      "Bash(git push*)",
+      "Bash(docker compose down -v*)"
+    ]
+  }
+}
