@@ -3,3 +3,17 @@
 
 export type { GetMe$Params as GetMe$Params } from './fn/me/get-me';
 export { getMe as getMe } from './fn/me/get-me';
+export type { GetUsers$Params as GetUsers$Params } from './fn/users/get-users';
+export { getUsers as getUsers } from './fn/users/get-users';
+export type { GetPlanning$Params as GetPlanning$Params } from './fn/planning/get-planning';
+export { getPlanning as getPlanning } from './fn/planning/get-planning';
+export type { GetUserSchedule$Params as GetUserSchedule$Params } from './fn/schedule/get-user-schedule';
+export { getUserSchedule as getUserSchedule } from './fn/schedule/get-user-schedule';
+export type { UpdateUserSchedule$Params as UpdateUserSchedule$Params } from './fn/schedule/update-user-schedule';
+export { updateUserSchedule as updateUserSchedule } from './fn/schedule/update-user-schedule';
+export type { CreateSpecialDay$Params as CreateSpecialDay$Params } from './fn/schedule/create-special-day';
+export { createSpecialDay as createSpecialDay } from './fn/schedule/create-special-day';
+export type { UpdateSpecialDay$Params as UpdateSpecialDay$Params } from './fn/schedule/update-special-day';
+export { updateSpecialDay as updateSpecialDay } from './fn/schedule/update-special-day';
+export type { DeleteSpecialDay$Params as DeleteSpecialDay$Params } from './fn/schedule/delete-special-day';
+export { deleteSpecialDay as deleteSpecialDay } from './fn/schedule/delete-special-day';

@@ -1,5 +1,6 @@
 package com.erp.user;
 
+import java.math.BigDecimal;
 import java.time.OffsetDateTime;
 
 import jakarta.persistence.Column;
@@ -29,6 +30,10 @@ public class AppUser {
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false)
 	private Role role = Role.EMPLOYEE;
+
+	/** Durée minimale (heures) de toute journée travaillée. */
+	@Column(nullable = false)
+	private BigDecimal minDailyHours = new BigDecimal("8");
 
 	@Column(nullable = false, insertable = false, updatable = false)
 	private OffsetDateTime createdAt;
@@ -60,6 +65,14 @@ public class AppUser {
 
 	public Role getRole() {
 		return role;
+	}
+
+	public BigDecimal getMinDailyHours() {
+		return minDailyHours;
+	}
+
+	public void setMinDailyHours(BigDecimal minDailyHours) {
+		this.minDailyHours = minDailyHours;
 	}
 
 	/** Complète le nom si le fournisseur d'identité le fournit et qu'il manque en base. */

@@ -1,4 +1,5 @@
-# Surcharge de test : la datasource vient de Testcontainers (@ServiceConnection).
+# Surcharges de test, chargées EN PLUS de src/main/resources/application.yaml (config/ est prioritaire).
+# La datasource vient de Testcontainers (@ServiceConnection).
 spring:
   flyway:
     placeholders:

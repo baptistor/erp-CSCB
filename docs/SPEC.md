@@ -18,10 +18,31 @@ Le rôle est stocké en base (table `app_user`). Le premier admin est inséré p
 ### 1. Planning (tous)
 - Vue semaine / mois de tous les employés (FullCalendar, une couleur par personne avec son nom prénom apparent).
 - Affiche : créneaux de travail + congés approuvés.
-- ADMIN : crée / modifie / supprime des créneaux (date, début, fin).
 
-Tout se compte en HEURES (pas de jours).
-Workflow commun à toutes les demandes : PENDING → APPROVED | REJECTED (par un admin, commentaire optionnel) ; PENDING → CANCELLED (par le demandeur).
+Le planning d'un jour donné se calcule ainsi : journée spéciale si elle existe, sinon journée type.
+
+- **Journée type** (par employé et par jour de la semaine, lundi → dimanche) :
+  plage horaire début / fin, ou « non travaillé ».
+  Valeur par défaut à la création d'un employé : lundi → vendredi 9h00 – 17h00, samedi et dimanche non travaillés.
+- **Journée spéciale** (par employé et pour une date précise) : remplace la journée type ce jour-là
+  (autre plage horaire, ou « non travaillé »).
+- **Minimum d'heures par jour** : paramètre par employé, 8 h par défaut.
+  Toute journée travaillée (type ou spéciale) doit avoir une durée ≥ ce minimum,
+  sinon l'enregistrement est refusé avec un message clair.
+  Un jour « non travaillé » n'est pas soumis au minimum.
+- Règles : heure de fin > heure de début ; pas de plage à cheval sur minuit ; pas de pause déduite (V1).
+- ADMIN : modifie les journées types, crée / modifie / supprime les journées spéciales,
+  modifie le minimum d'heures d'un employé.
+- EMPLOYEE : consulte ses horaires et ceux des autres ; peut aussi **modifier ses propres journées**,
+  sans validation d'un admin, à condition de respecter les règles ci-dessus (durée ≥ son minimum, fin > début) :
+  ses journées types, et ses journées spéciales à partir d'aujourd'hui (création / modification / suppression ;
+  les jours passés ne sont plus modifiables par l'employé).
+  Il ne peut pas modifier son minimum d'heures ni les horaires d'un autre employé.
+
+Tout se compte en HEURES (pas de jours, pas de CP/RTT).
+
+Workflow commun à toutes les demandes :
+PENDING → APPROVED | REJECTED (par un admin, commentaire optionnel) ; PENDING → CANCELLED (par le demandeur).
 
 
 ### 2. Déclarer des heures supplémentaires (alimente le solde)

@@ -14,7 +14,10 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AnonymousAuthenticationFilter;
 
+import java.io.IOException;
+
 import jakarta.servlet.DispatcherType;
+import jakarta.servlet.http.HttpServletResponse;
 
 /**
  * API stateless. Prod : JWT Entra ID (OAuth2 Resource Server). Dev : header {@code X-Dev-User}.
@@ -48,7 +51,9 @@ public class SecurityConfig {
 				.permitAll()
 				.anyRequest()
 				.authenticated())
-			.exceptionHandling(ex -> ex.authenticationEntryPoint(problemEntryPoint()));
+			.exceptionHandling(ex -> ex.authenticationEntryPoint(problemEntryPoint())
+				.accessDeniedHandler((request, response, denied) -> writeProblem(response, HttpStatus.FORBIDDEN,
+						"Accès refusé")));
 	}
 
 	private static UsernamePasswordAuthenticationToken toAuthentication(Jwt jwt, CurrentUserService currentUsers) {
@@ -69,14 +74,17 @@ public class SecurityConfig {
 	}
 
 	static AuthenticationEntryPoint problemEntryPoint() {
-		return (request, response, ex) -> {
-			response.setStatus(HttpStatus.UNAUTHORIZED.value());
-			response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
-			response.setCharacterEncoding("UTF-8");
-			response.getWriter()
-				.write("{\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,"
-						+ "\"detail\":\"Authentification requise\"}");
-		};
+		return (request, response, ex) -> writeProblem(response, HttpStatus.UNAUTHORIZED, "Authentification requise");
+	}
+
+	private static void writeProblem(HttpServletResponse response, HttpStatus status, String detail)
+			throws IOException {
+		response.setStatus(status.value());
+		response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+		response.setCharacterEncoding("UTF-8");
+		response.getWriter()
+			.write("{\"type\":\"about:blank\",\"title\":\"" + status.getReasonPhrase() + "\",\"status\":"
+					+ status.value() + ",\"detail\":\"" + detail + "\"}");
 	}
 
 }

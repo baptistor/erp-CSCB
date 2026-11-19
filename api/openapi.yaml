@@ -25,6 +25,184 @@ paths:
                 $ref: '#/components/schemas/CurrentUser'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /users:
+    get:
+      operationId: getUsers
+      tags: [users]
+      summary: Liste des utilisateurs (noms, couleurs du planning, choix de l'employé)
+      responses:
+        '200':
+          description: Utilisateurs triés par nom puis prénom
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /planning:
+    get:
+      operationId: getPlanning
+      tags: [planning]
+      summary: Journées calculées (spéciale sinon type) et absences approuvées de tous les employés
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Début de période (inclus)
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          description: Fin de période (exclue). Période max 62 jours.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Planning de la période
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Planning'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /users/{userId}/schedule:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: getUserSchedule
+      tags: [schedule]
+      summary: Semaine type et minimum d'heures d'un employé (lecture pour tous)
+      responses:
+        '200':
+          description: Horaires de l'employé
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchedule'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateUserSchedule
+      tags: [schedule]
+      summary: Modifie la semaine type et le minimum d'heures (ADMIN, ou l'employé pour lui-même)
+      description: |
+        ADMIN : tout employé. EMPLOYEE : sa propre semaine uniquement, sans changer son minimum (403 sinon).
+        Les 7 jours et le minimum sont validés ensemble : toute journée travaillée doit durer au moins
+        le minimum. Le nouveau minimum est aussi vérifié sur les journées spéciales à venir.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserSchedule'
+      responses:
+        '200':
+          description: Horaires enregistrés
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserSchedule'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /special-days:
+    post:
+      operationId: createSpecialDay
+      tags: [schedule]
+      summary: Crée une journée spéciale — remplace la journée type à cette date
+      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpecialDayInput'
+      responses:
+        '201':
+          description: Journée spéciale créée
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecialDay'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /special-days/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    put:
+      operationId: updateSpecialDay
+      tags: [schedule]
+      summary: Modifie une journée spéciale
+      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpecialDayInput'
+      responses:
+        '200':
+          description: Journée spéciale modifiée
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpecialDay'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+    delete:
+      operationId: deleteSpecialDay
+      tags: [schedule]
+      summary: Supprime une journée spéciale — retour à la journée type
+      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
+      responses:
+        '204':
+          description: Supprimée
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
 components:
   securitySchemes:
     bearerAuth:
@@ -37,6 +215,24 @@ components:
       name: X-Dev-User
       description: Profil dev uniquement — email de l'utilisateur simulé.
   responses:
+    BadRequest:
+      description: Requête invalide
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Conflict:
+      description: Conflit (ex. journée spéciale déjà existante à cette date)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    NotFound:
+      description: Ressource introuvable
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
     Unauthorized:
       description: Non authentifié
       content:
@@ -69,6 +265,151 @@ components:
           type: [string, 'null']
         role:
           $ref: '#/components/schemas/Role'
+    UserSummary:
+      type: object
+      required: [id, email]
+      properties:
+        id:
+          type: integer
+          format: int64
+        email:
+          type: string
+        firstName:
+          type: [string, 'null']
+        lastName:
+          type: [string, 'null']
+    LocalTime:
+      type: string
+      description: Heure locale (Europe/Paris), HH:mm
+      pattern: '^\d{2}:\d{2}(:\d{2})?$'
+      example: '08:30'
+    TypicalDay:
+      type: object
+      description: Journée type. startTime et endTime absents/null = non travaillé.
+      required: [dayOfWeek]
+      properties:
+        dayOfWeek:
+          type: integer
+          minimum: 1
+          maximum: 7
+          description: 1 = lundi … 7 = dimanche
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+    UserSchedule:
+      type: object
+      required: [minDailyHours, days]
+      properties:
+        minDailyHours:
+          type: number
+          description: Durée minimale d'une journée travaillée, en heures (pas de 0,25)
+          example: 8
+        days:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: '#/components/schemas/TypicalDay'
+    SpecialDayInput:
+      type: object
+      description: startTime et endTime null = non travaillé ce jour-là.
+      required: [userId, date]
+      properties:
+        userId:
+          type: integer
+          format: int64
+        date:
+          type: string
+          format: date
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+    SpecialDay:
+      type: object
+      required: [id, userId, date]
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        date:
+          type: string
+          format: date
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+    PlanningDay:
+      type: object
+      description: |
+        Journée calculée d'un employé (spéciale sinon type). Les journées types non travaillées ne sont
+        pas renvoyées ; une journée spéciale l'est toujours (specialDayId non null), même non travaillée
+        (startTime/endTime null).
+      required: [userId, date]
+      properties:
+        userId:
+          type: integer
+          format: int64
+        date:
+          type: string
+          format: date
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        specialDayId:
+          type: [integer, 'null']
+          format: int64
+    PlanningAbsence:
+      type: object
+      description: Absence APPROVED (sans type ni commentaire, visibles par tous).
+      required: [id, userId, startDate, endDate]
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+          description: Inclus
+    Planning:
+      type: object
+      required: [days, absences]
+      properties:
+        days:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningDay'
+        absences:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningAbsence'
     ProblemDetail:
       type: object
       properties:
