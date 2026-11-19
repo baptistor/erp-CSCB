@@ -7,7 +7,8 @@
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
-    "generate:api": "ng-openapi-gen"
+    "generate:api": "ng-openapi-gen",
+    "start:tunnel": "ng serve --configuration tunnel"
   },
   "private": true,
   "packageManager": "npm@10.9.0",
