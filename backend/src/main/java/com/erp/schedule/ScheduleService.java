@@ -1,6 +1,7 @@
 package com.erp.schedule;
 
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -21,6 +22,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import com.erp.auth.AuthenticatedUser;
+import com.erp.common.RequestStatus;
+import com.erp.leave.AbsenceRequest;
 import com.erp.leave.AbsenceRequestRepository;
 import com.erp.schedule.ScheduleDtos.PlanningAbsenceDto;
 import com.erp.schedule.ScheduleDtos.PlanningDayDto;
@@ -34,7 +37,8 @@ import com.erp.user.AppUserRepository;
 import com.erp.user.Role;
 
 /**
- * Horaires (spec §1) : planning d'un jour = journée spéciale si elle existe, sinon journée type.
+ * Horaires (spec §1) : planning d'un jour = ses horaires modifiés s'ils existent, sinon la semaine type.
+ * (« SpecialDay » est le nom technique des horaires modifiés d'un jour ; aucune distinction côté utilisateur.)
  * Toute journée travaillée doit durer au moins le minimum d'heures de l'employé.
  */
 @Service
@@ -42,7 +46,7 @@ public class ScheduleService {
 
 	static final int MAX_PLANNING_DAYS = 62;
 
-	private static final TimeRange DEFAULT_WORKDAY = new TimeRange(LocalTime.of(9, 0), LocalTime.of(17, 0));
+	private static final TimeRange DEFAULT_WORKDAY = new TimeRange(LocalTime.of(9, 0), LocalTime.of(16, 0));
 
 	private static final DateTimeFormatter DATE_FR = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
@@ -54,8 +58,11 @@ public class ScheduleService {
 
 	private final AppUserRepository users;
 
+	private final Clock clock;
+
 	public ScheduleService(TypicalDayRepository typicalDays, SpecialDayRepository specialDays,
-			AbsenceRequestRepository absences, AppUserRepository users) {
+			AbsenceRequestRepository absences, AppUserRepository users, Clock clock) {
+		this.clock = clock;
 		this.typicalDays = typicalDays;
 		this.specialDays = specialDays;
 		this.absences = absences;
@@ -64,7 +71,7 @@ public class ScheduleService {
 
 	// ---------- semaine type ----------
 
-	/** Semaine par défaut d'un nouvel employé : lundi → vendredi 9h–17h, week-end non travaillé. */
+	/** Semaine par défaut d'un nouvel employé : lundi → vendredi 9h–16h (35 h), week-end non travaillé. */
 	@Transactional
 	public void createDefaultWeek(Long userId) {
 		for (DayOfWeek day : DayOfWeek.values()) {
@@ -82,17 +89,20 @@ public class ScheduleService {
 			TimeRange range = week.getOrDefault(day.getValue(), TimeRange.NOT_WORKED);
 			days.add(new TypicalDayDto(day.getValue(), range.start(), range.end()));
 		}
-		return new UserScheduleDto(user.getMinDailyHours(), days);
+		return new UserScheduleDto(user.getWeeklyHours(), days);
 	}
 
-	/** Enregistre la semaine type et le minimum ensemble (validés l'un par rapport à l'autre). */
+	/**
+	 * Enregistre la semaine type et le contrat hebdomadaire ensemble : la semaine doit totaliser exactement le contrat
+	 * (spec §1). Seul un admin peut modifier le contrat.
+	 */
 	@Transactional
 	public UserScheduleDto updateSchedule(AuthenticatedUser actor, Long userId, UserScheduleDto input) {
 		checkOwner(actor, userId);
 		AppUser user = findUser(userId);
-		BigDecimal min = validateMinHours(input.minDailyHours());
-		if (!isAdmin(actor) && min.compareTo(user.getMinDailyHours()) != 0) {
-			throw forbidden("Seul un admin peut modifier le minimum d'heures");
+		BigDecimal contract = validateWeeklyHours(input.weeklyHours());
+		if (!isAdmin(actor) && contract.compareTo(user.getWeeklyHours()) != 0) {
+			throw forbidden("Seul un admin peut modifier le contrat hebdomadaire");
 		}
 
 		Map<Integer, TimeRange> requested = new HashMap<>();
@@ -102,18 +112,18 @@ public class ScheduleService {
 				throw badRequest("Chaque jour de la semaine doit apparaître une seule fois");
 			}
 		}
+		long total = 0;
 		for (DayOfWeek day : DayOfWeek.values()) {
-			checkRange(dayLabel(day), requested.get(day.getValue()), min).ifPresent(errors::add);
-		}
-		// Le nouveau minimum s'applique aussi aux journées spéciales à venir déjà enregistrées
-		for (SpecialDay special : specialDays.findByUserIdAndDayDateGreaterThanEqualOrderByDayDate(userId,
-				LocalDate.now())) {
-			checkRange("Journée spéciale du " + special.getDayDate().format(DATE_FR), special.range(), min)
-				.ifPresent(errors::add);
+			TimeRange range = requested.get(day.getValue());
+			checkRange(dayLabel(day), range).ifPresent(errors::add);
+			total += range == null ? 0 : range.minutes();
 		}
 		if (!errors.isEmpty()) {
 			throw badRequest(String.join(" ; ", errors));
 		}
+		checkContract(total, contract).ifPresent(error -> {
+			throw badRequest(error);
+		});
 
 		Map<Integer, TypicalDay> existing = typicalDays.findByUserIdOrderByDayOfWeek(userId)
 			.stream()
@@ -127,11 +137,11 @@ public class ScheduleService {
 				day.setRange(range);
 			}
 		});
-		user.setMinDailyHours(min);
+		user.setWeeklyHours(contract);
 		return getSchedule(userId);
 	}
 
-	// ---------- journées spéciales ----------
+	// ---------- horaires modifiés d'un jour ----------
 
 	@Transactional
 	public SpecialDayDto createSpecialDay(AuthenticatedUser actor, SpecialDayInput input) {
@@ -139,37 +149,45 @@ public class ScheduleService {
 		TimeRange range = validateSpecialDay(input);
 		if (specialDays.existsByUserIdAndDayDate(input.userId(), input.date())) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT,
-					"Une journée spéciale existe déjà pour cet employé à cette date");
+					"Les horaires de ce jour sont déjà modifiés pour cet employé");
 		}
 		return SpecialDayDto.of(specialDays.save(new SpecialDay(input.userId(), input.date(), range)));
 	}
 
 	@Transactional
 	public SpecialDayDto updateSpecialDay(AuthenticatedUser actor, Long id, SpecialDayInput input) {
-		SpecialDay day = specialDays.findById(id).orElseThrow(() -> notFound("Journée spéciale introuvable"));
+		SpecialDay day = specialDays.findById(id).orElseThrow(() -> notFound("Horaires du jour introuvables"));
 		checkCanEditDay(actor, day.getUserId(), day.getDayDate()); // la journée actuelle…
 		checkCanEditDay(actor, input.userId(), input.date()); // …et la nouvelle
 		TimeRange range = validateSpecialDay(input);
 		if (specialDays.existsByUserIdAndDayDateAndIdNot(input.userId(), input.date(), id)) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT,
-					"Une journée spéciale existe déjà pour cet employé à cette date");
+					"Les horaires de ce jour sont déjà modifiés pour cet employé");
 		}
 		day.update(input.userId(), input.date(), range);
 		return SpecialDayDto.of(day);
 	}
 
-	/** Supprimer une journée spéciale = revenir à la journée type. */
+	/** Supprimer les horaires modifiés d'un jour = revenir aux horaires de la semaine type. */
 	@Transactional
 	public void deleteSpecialDay(AuthenticatedUser actor, Long id) {
-		SpecialDay day = specialDays.findById(id).orElseThrow(() -> notFound("Journée spéciale introuvable"));
+		SpecialDay day = specialDays.findById(id).orElseThrow(() -> notFound("Horaires du jour introuvables"));
 		checkCanEditDay(actor, day.getUserId(), day.getDayDate());
 		specialDays.delete(day);
 	}
 
 	// ---------- planning calculé ----------
 
+	/** Journée prévue d'un employé à une date : horaires modifiés du jour s'ils existent, sinon semaine type. */
 	@Transactional(readOnly = true)
-	public PlanningDto planning(LocalDate from, LocalDate to) {
+	public TimeRange plannedDay(Long userId, LocalDate date) {
+		return specialDays.findByUserIdAndDayDate(userId, date)
+			.map(SpecialDay::range)
+			.orElseGet(() -> typicalWeek(userId).getOrDefault(date.getDayOfWeek().getValue(), TimeRange.NOT_WORKED));
+	}
+
+	@Transactional(readOnly = true)
+	public PlanningDto planning(AuthenticatedUser viewer, LocalDate from, LocalDate to) {
 		if (!to.isAfter(from) || ChronoUnit.DAYS.between(from, to) > MAX_PLANNING_DAYS) {
 			throw badRequest("Période invalide : 'to' doit être après 'from', " + MAX_PLANNING_DAYS + " jours max");
 		}
@@ -199,9 +217,12 @@ public class ScheduleService {
 				}
 			}
 		}
-		var absenceDtos = absences.findApprovedOverlapping(from, to)
-			.stream()
-			.map(a -> new PlanningAbsenceDto(a.getId(), a.getUserId(), a.getStartDate(), a.getEndDate()))
+		// absences approuvées de tous + absences en attente de l'utilisateur connecté (spec §3)
+		List<AbsenceRequest> visible = new ArrayList<>(absences.findApprovedOverlapping(from, to));
+		visible.addAll(absences.findOverlapping(viewer.id(), from, to.minusDays(1), List.of(RequestStatus.PENDING)));
+		var absenceDtos = visible.stream()
+			.map(a -> new PlanningAbsenceDto(a.getId(), a.getUserId(), a.getStartDate(), a.getEndDate(),
+					a.getStartTime(), a.getEndTime(), a.getStatus()))
 			.toList();
 		return new PlanningDto(days, absenceDtos);
 	}
@@ -219,19 +240,20 @@ public class ScheduleService {
 	}
 
 	/** Employé : uniquement ses journées, à partir d'aujourd'hui. */
-	private static void checkCanEditDay(AuthenticatedUser actor, Long userId, LocalDate date) {
+	private void checkCanEditDay(AuthenticatedUser actor, Long userId, LocalDate date) {
 		checkOwner(actor, userId);
-		if (!isAdmin(actor) && date.isBefore(LocalDate.now())) {
+		if (!isAdmin(actor) && date.isBefore(LocalDate.now(clock))) {
 			throw badRequest("Les jours passés ne sont plus modifiables");
 		}
 	}
 
 	// ---------- règles ----------
 
+	/** Horaires d'un jour : pas de contrainte de durée (spec §1), seulement fin > début. */
 	private TimeRange validateSpecialDay(SpecialDayInput input) {
-		AppUser user = findUser(input.userId());
+		findUser(input.userId());
 		TimeRange range = toRange(input.startTime(), input.endTime());
-		checkRange("Le " + input.date().format(DATE_FR), range, user.getMinDailyHours()).ifPresent(error -> {
+		checkRange("Le " + input.date().format(DATE_FR), range).ifPresent(error -> {
 			throw badRequest(error);
 		});
 		return range;
@@ -245,28 +267,36 @@ public class ScheduleService {
 		return start == null ? TimeRange.NOT_WORKED : new TimeRange(start, end);
 	}
 
-	/** Fin > début (donc pas à cheval sur minuit) et durée ≥ minimum ; message d'erreur sinon. */
-	static Optional<String> checkRange(String label, TimeRange range, BigDecimal minHours) {
-		if (range == null || !range.worked()) {
+	/** Fin > début (donc pas à cheval sur minuit) ; message d'erreur sinon. */
+	static Optional<String> checkRange(String label, TimeRange range) {
+		if (range == null || !range.worked() || range.end().isAfter(range.start())) {
 			return Optional.empty();
 		}
-		if (!range.end().isAfter(range.start())) {
-			return Optional.of(label + " : l'heure de fin doit être après l'heure de début");
-		}
-		long minMinutes = minHours.multiply(BigDecimal.valueOf(60)).longValue();
-		if (range.minutes() < minMinutes) {
-			return Optional.of(label + " : " + formatMinutes(range.minutes()) + " < minimum de "
-					+ formatMinutes(minMinutes));
-		}
-		return Optional.empty();
+		return Optional.of(label + " : l'heure de fin doit être après l'heure de début");
 	}
 
-	private static BigDecimal validateMinHours(BigDecimal min) {
-		boolean quarter = min.multiply(BigDecimal.valueOf(4)).stripTrailingZeros().scale() <= 0;
-		if (min.signum() <= 0 || min.compareTo(BigDecimal.valueOf(24)) > 0 || !quarter) {
-			throw badRequest("Le minimum d'heures doit être compris entre 0,25 et 24 h, par pas de 0,25 h");
+	/** La semaine type doit totaliser exactement le contrat hebdomadaire ; message d'erreur sinon. */
+	static Optional<String> checkContract(long totalMinutes, BigDecimal contract) {
+		long contractMinutes = contract.multiply(BigDecimal.valueOf(60)).longValue();
+		if (totalMinutes == contractMinutes) {
+			return Optional.empty();
 		}
-		return min;
+		String summary = "Semaine type : " + formatMinutes(totalMinutes) + " pour un contrat de "
+				+ formatMinutes(contractMinutes) + " — ";
+		if (totalMinutes < contractMinutes) {
+			return Optional.of(summary + "il manque " + formatMinutes(contractMinutes - totalMinutes));
+		}
+		return Optional.of(summary + formatMinutes(totalMinutes - contractMinutes) + " de trop : la semaine type doit "
+				+ "rester au contrat ; déclarez les heures en plus sur le planning (horaires du jour concerné) puis par une "
+				+ "déclaration d'heures supplémentaires");
+	}
+
+	private static BigDecimal validateWeeklyHours(BigDecimal hours) {
+		boolean quarter = hours.multiply(BigDecimal.valueOf(4)).stripTrailingZeros().scale() <= 0;
+		if (hours.signum() <= 0 || hours.compareTo(BigDecimal.valueOf(168)) > 0 || !quarter) {
+			throw badRequest("Le contrat hebdomadaire doit être compris entre 0,25 et 168 h, par pas de 0,25 h");
+		}
+		return hours;
 	}
 
 	static String formatMinutes(long minutes) {

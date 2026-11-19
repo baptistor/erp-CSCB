@@ -31,9 +31,9 @@ public class AppUser {
 	@Column(nullable = false)
 	private Role role = Role.EMPLOYEE;
 
-	/** Durée minimale (heures) de toute journée travaillée. */
+	/** Contrat hebdomadaire (heures) : total exact de la semaine type. */
 	@Column(nullable = false)
-	private BigDecimal minDailyHours = new BigDecimal("8");
+	private BigDecimal weeklyHours = new BigDecimal("35");
 
 	@Column(nullable = false, insertable = false, updatable = false)
 	private OffsetDateTime createdAt;
@@ -67,12 +67,12 @@ public class AppUser {
 		return role;
 	}
 
-	public BigDecimal getMinDailyHours() {
-		return minDailyHours;
+	public BigDecimal getWeeklyHours() {
+		return weeklyHours;
 	}
 
-	public void setMinDailyHours(BigDecimal minDailyHours) {
-		this.minDailyHours = minDailyHours;
+	public void setWeeklyHours(BigDecimal weeklyHours) {
+		this.weeklyHours = weeklyHours;
 	}
 
 	/** Complète le nom si le fournisseur d'identité le fournit et qu'il manque en base. */

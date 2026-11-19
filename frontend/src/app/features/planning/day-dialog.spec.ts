@@ -9,15 +9,18 @@ describe('workedDayValidator', () => {
       endTime: new FormControl(endTime),
     });
 
-  it('accepte une journée ≥ minimum', () => {
-    expect(workedDayValidator(() => 8)(group(true, '09:00', '17:00'))).toBeNull();
+  it('accepte une journée de n’importe quelle durée', () => {
+    expect(workedDayValidator(group(true, '09:00', '16:00'))).toBeNull();
+    expect(workedDayValidator(group(true, '10:00', '11:00'))).toBeNull();
   });
 
-  it('refuse une journée < minimum avec le message', () => {
-    expect(workedDayValidator(() => 8)(group(true, '09:00', '16:00'))).toEqual({ range: '7 h < minimum de 8 h' });
+  it('refuse une fin avant le début', () => {
+    expect(workedDayValidator(group(true, '16:00', '09:00'))).toEqual({
+      range: "L'heure de fin doit être après l'heure de début",
+    });
   });
 
-  it("n'applique pas le minimum à un jour non travaillé", () => {
-    expect(workedDayValidator(() => 8)(group(false, '09:00', '10:00'))).toBeNull();
+  it("ne contrôle pas un jour non travaillé", () => {
+    expect(workedDayValidator(group(false, '16:00', '09:00'))).toBeNull();
   });
 });

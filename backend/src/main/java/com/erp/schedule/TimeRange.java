@@ -4,15 +4,15 @@ import java.time.Duration;
 import java.time.LocalTime;
 
 /** Plage horaire d'une journée ; start/end null = « non travaillé ». */
-record TimeRange(LocalTime start, LocalTime end) {
+public record TimeRange(LocalTime start, LocalTime end) {
 
-	static final TimeRange NOT_WORKED = new TimeRange(null, null);
+	public static final TimeRange NOT_WORKED = new TimeRange(null, null);
 
-	boolean worked() {
+	public boolean worked() {
 		return start != null;
 	}
 
-	long minutes() {
+	public long minutes() {
 		return worked() ? Duration.between(start, end).toMinutes() : 0;
 	}
 

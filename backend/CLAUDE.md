@@ -18,7 +18,8 @@ Dans chaque feature : `XxxController`, `XxxService`, `XxxRepository`, entité JP
 - Logique métier dans les services (ex : transitions de statut), pas dans les controllers.
 - Statuts de demande : PENDING → APPROVED | REJECTED, PENDING → CANCELLED (par le demandeur).
   Toute transition passe par une seule méthode de service qui publie un événement
-  (`ApplicationEventPublisher`) ; le module notification écoute et envoie le mail.
+  (`ApplicationEventPublisher`) ; le module notification écoute et envoie le mail
+  avec `@TransactionalEventListener(phase = AFTER_COMMIT)` (jamais `@EventListener` : pas de mail si la transaction échoue).
 - Sécurité : OAuth2 Resource Server (JWT). `@PreAuthorize` sur chaque méthode de controller.
   Profil `dev` : authentification simulée (header `X-Dev-User: email`) pour développer sans SSO.
 - Erreurs : `@RestControllerAdvice` + `ProblemDetail`.

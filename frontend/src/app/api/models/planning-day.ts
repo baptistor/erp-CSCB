@@ -4,8 +4,9 @@
 import { LocalTime } from '../models/local-time';
 
 /**
- * Journée calculée d'un employé (spéciale sinon type). Les journées types non travaillées ne sont
- * pas renvoyées ; une journée spéciale l'est toujours (specialDayId non null), même non travaillée
+ * Journée calculée d'un employé (horaires modifiés du jour sinon semaine type). Les jours non travaillés de la
+ * semaine type ne sont pas renvoyés ; un jour aux horaires modifiés l'est toujours (specialDayId non null, identifiant
+ * technique), même non travaillé
  * (startTime/endTime null).
  */
 export interface PlanningDay {

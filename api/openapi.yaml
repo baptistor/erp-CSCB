@@ -45,7 +45,7 @@ paths:
     get:
       operationId: getPlanning
       tags: [planning]
-      summary: Journées calculées (spéciale sinon type) et absences approuvées de tous les employés
+      summary: Horaires calculés (horaires modifiés du jour sinon semaine type) et absences approuvées de tous les employés
       parameters:
         - name: from
           in: query
@@ -83,7 +83,7 @@ paths:
     get:
       operationId: getUserSchedule
       tags: [schedule]
-      summary: Semaine type et minimum d'heures d'un employé (lecture pour tous)
+      summary: Semaine type et contrat hebdomadaire d'un employé (lecture pour tous)
       responses:
         '200':
           description: Horaires de l'employé
@@ -98,11 +98,11 @@ paths:
     put:
       operationId: updateUserSchedule
       tags: [schedule]
-      summary: Modifie la semaine type et le minimum d'heures (ADMIN, ou l'employé pour lui-même)
+      summary: Modifie la semaine type et le contrat hebdomadaire (ADMIN, ou l'employé pour lui-même)
       description: |
-        ADMIN : tout employé. EMPLOYEE : sa propre semaine uniquement, sans changer son minimum (403 sinon).
-        Les 7 jours et le minimum sont validés ensemble : toute journée travaillée doit durer au moins
-        le minimum. Le nouveau minimum est aussi vérifié sur les journées spéciales à venir.
+        ADMIN : tout employé. EMPLOYEE : sa propre semaine uniquement, sans changer son contrat (403 sinon).
+        La semaine type doit totaliser exactement le contrat hebdomadaire (400 sinon, avec un message indiquant
+        les heures manquantes ou en trop).
       requestBody:
         required: true
         content:
@@ -128,7 +128,7 @@ paths:
     post:
       operationId: createSpecialDay
       tags: [schedule]
-      summary: Crée une journée spéciale — remplace la journée type à cette date
+      summary: Modifie les horaires d'un jour précis (la semaine type ne change pas)
       description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
       requestBody:
         required: true
@@ -138,7 +138,7 @@ paths:
               $ref: '#/components/schemas/SpecialDayInput'
       responses:
         '201':
-          description: Journée spéciale créée
+          description: Horaires du jour enregistrés
           content:
             application/json:
               schema:
@@ -164,7 +164,7 @@ paths:
     put:
       operationId: updateSpecialDay
       tags: [schedule]
-      summary: Modifie une journée spéciale
+      summary: Change les horaires déjà modifiés d'un jour
       description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
       requestBody:
         required: true
@@ -174,7 +174,7 @@ paths:
               $ref: '#/components/schemas/SpecialDayInput'
       responses:
         '200':
-          description: Journée spéciale modifiée
+          description: Horaires du jour enregistrés
           content:
             application/json:
               schema:
@@ -192,11 +192,287 @@ paths:
     delete:
       operationId: deleteSpecialDay
       tags: [schedule]
-      summary: Supprime une journée spéciale — retour à la journée type
+      summary: Remet les horaires habituels du jour (ceux de la semaine type)
       description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
       responses:
         '204':
           description: Supprimée
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /me/requests:
+    get:
+      operationId: getMyRequests
+      tags: [requests]
+      summary: Mes déclarations d'heures sup et mes absences
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Requests'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/balance:
+    get:
+      operationId: getMyBalance
+      tags: [requests]
+      summary: Mon solde d'heures sup, disponible et historique
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/overtime-requests:
+    post:
+      operationId: declareOvertime
+      tags: [requests]
+      summary: Déclarer des heures supplémentaires (PENDING)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OvertimeInput'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OvertimeRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/overtime-requests/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: cancelOvertime
+      tags: [requests]
+      summary: Annuler ma déclaration en attente
+      description: "Uniquement par le demandeur (403 sinon) et si PENDING (409 sinon)."
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OvertimeRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /me/absence-requests:
+    post:
+      operationId: requestAbsence
+      tags: [requests]
+      summary: Poser une absence (PENDING)
+      description: "Posée sur le planning. Règles : à partir d'aujourd'hui, sur ses propres horaires prévus, pas de chevauchement (au quart d'heure) avec une absence PENDING/APPROVED. RECUP_HEURES_SUP refusée si heures calculées > disponible (solde − récup PENDING)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AbsenceInput'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbsenceRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/absence-requests/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: cancelAbsence
+      tags: [requests]
+      summary: Supprimer mon absence (en attente ou acceptée)
+      description: "Uniquement par le demandeur (403 sinon), si l'absence est PENDING ou APPROVED (409 sinon) et pas encore commencée (400 sinon). Passe au statut CANCELLED ; une récupération acceptée rend ses heures au solde."
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbsenceRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /admin/pending-requests:
+    get:
+      operationId: getPendingRequests
+      tags: [admin]
+      summary: Demandes en attente de tous les employés (ADMIN)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Requests'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /admin/overtime-requests/{id}/decision:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: decideOvertime
+      tags: [admin]
+      summary: Approuver ou refuser une déclaration d'heures sup (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionInput'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OvertimeRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /admin/absence-requests/{id}/decision:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: decideAbsence
+      tags: [admin]
+      summary: Approuver ou refuser une absence (ADMIN)
+      description: "409 si la demande n'est plus PENDING, ou si le solde ne couvre plus une récup à approuver."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionInput'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AbsenceRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /admin/users/{userId}/balance:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      operationId: getUserBalance
+      tags: [admin]
+      summary: Solde d'heures sup d'un employé (ADMIN)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /admin/users/{userId}/balance-adjustments:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: adjustBalance
+      tags: [admin]
+      summary: Ajuster le solde d'un employé (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdjustmentInput'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Balance'
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -222,7 +498,7 @@ components:
           schema:
             $ref: '#/components/schemas/ProblemDetail'
     Conflict:
-      description: Conflit (ex. journée spéciale déjà existante à cette date)
+      description: Conflit (ex. horaires déjà modifiés pour ce jour)
       content:
         application/problem+json:
           schema:
@@ -303,12 +579,12 @@ components:
             - type: 'null'
     UserSchedule:
       type: object
-      required: [minDailyHours, days]
+      required: [weeklyHours, days]
       properties:
-        minDailyHours:
+        weeklyHours:
           type: number
-          description: Durée minimale d'une journée travaillée, en heures (pas de 0,25)
-          example: 8
+          description: Contrat hebdomadaire en heures (pas de 0,25, max 168) ; la semaine type doit le totaliser exactement
+          example: 35
         days:
           type: array
           minItems: 7
@@ -358,8 +634,9 @@ components:
     PlanningDay:
       type: object
       description: |
-        Journée calculée d'un employé (spéciale sinon type). Les journées types non travaillées ne sont
-        pas renvoyées ; une journée spéciale l'est toujours (specialDayId non null), même non travaillée
+        Journée calculée d'un employé (horaires modifiés du jour sinon semaine type). Les jours non travaillés de la
+        semaine type ne sont pas renvoyés ; un jour aux horaires modifiés l'est toujours (specialDayId non null, identifiant
+        technique), même non travaillé
         (startTime/endTime null).
       required: [userId, date]
       properties:
@@ -382,8 +659,10 @@ components:
           format: int64
     PlanningAbsence:
       type: object
-      description: Absence APPROVED (sans type ni commentaire, visibles par tous).
-      required: [id, userId, startDate, endDate]
+      description: |
+        Absence affichée au planning, sans type ni commentaire : APPROVED (visible par tous) ou PENDING de
+        l'utilisateur connecté. startTime/endTime null = journées entières.
+      required: [id, userId, startDate, endDate, status]
       properties:
         id:
           type: integer
@@ -398,6 +677,16 @@ components:
           type: string
           format: date
           description: Inclus
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        status:
+          $ref: '#/components/schemas/RequestStatus'
     Planning:
       type: object
       required: [days, absences]
@@ -410,6 +699,176 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlanningAbsence'
+    RequestStatus:
+      type: string
+      enum: [PENDING, APPROVED, REJECTED, CANCELLED]
+    AbsenceType:
+      type: string
+      enum: [RECUP_HEURES_SUP, SANS_SOLDE]
+    OvertimeInput:
+      type: object
+      required: [date, hours, reason]
+      properties:
+        date:
+          type: string
+          format: date
+        hours:
+          type: number
+          description: Heures > 0, au pas de 0,25 (max 24)
+        reason:
+          type: string
+    OvertimeRequest:
+      type: object
+      required: [id, userId, date, hours, reason, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        date:
+          type: string
+          format: date
+        hours:
+          type: number
+        reason:
+          type: string
+        status:
+          $ref: '#/components/schemas/RequestStatus'
+        adminComment:
+          type: [string, 'null']
+        decidedAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    AbsenceInput:
+      type: object
+      description: |
+        Absence posée sur le planning (spec §3) : plage horaire d'un seul jour (startTime + endTime, au quart d'heure,
+        comprise dans la journée prévue) ou journées entières (sans heures). Le nombre d'heures est calculé par le
+        serveur (durée de la plage, ou somme des heures prévues des jours travaillés).
+      required: [type, startDate]
+      properties:
+        type:
+          $ref: '#/components/schemas/AbsenceType'
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: [string, 'null']
+          format: date
+          description: Inclus ; absent = startDate
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        comment:
+          type: [string, 'null']
+    AbsenceRequest:
+      type: object
+      required: [id, userId, type, startDate, endDate, hours, status]
+      properties:
+        id:
+          type: integer
+          format: int64
+        userId:
+          type: integer
+          format: int64
+        type:
+          $ref: '#/components/schemas/AbsenceType'
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+        startTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        endTime:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        hours:
+          type: number
+          description: Calculé par le serveur
+        comment:
+          type: [string, 'null']
+        status:
+          $ref: '#/components/schemas/RequestStatus'
+        adminComment:
+          type: [string, 'null']
+        decidedAt:
+          type: [string, 'null']
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+    Requests:
+      type: object
+      required: [overtimes, absences]
+      properties:
+        overtimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/OvertimeRequest'
+        absences:
+          type: array
+          items:
+            $ref: '#/components/schemas/AbsenceRequest'
+    DecisionInput:
+      type: object
+      required: [approved]
+      properties:
+        approved:
+          type: boolean
+        comment:
+          type: [string, 'null']
+    AdjustmentInput:
+      type: object
+      required: [hours, reason]
+      properties:
+        hours:
+          type: number
+          description: Heures signées (+ ou −), non nulles, au pas de 0,25
+        reason:
+          type: string
+    Movement:
+      type: object
+      required: [date, kind, hours, label]
+      properties:
+        date:
+          type: string
+          format: date
+        kind:
+          type: string
+          enum: [OVERTIME, RECUP, ADJUSTMENT]
+        hours:
+          type: number
+          description: Signées (+ heures sup / ajustement positif, − récup / ajustement négatif)
+        label:
+          type: string
+    Balance:
+      type: object
+      description: "solde = Σ heures sup APPROVED − Σ récup APPROVED + Σ ajustements ; disponible = solde − Σ récup PENDING"
+      required: [balance, available, movements]
+      properties:
+        balance:
+          type: number
+        available:
+          type: number
+        movements:
+          type: array
+          items:
+            $ref: '#/components/schemas/Movement'
     ProblemDetail:
       type: object
       properties:

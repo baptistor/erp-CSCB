@@ -75,7 +75,9 @@ interface NavItem {
       background: var(--mat-sys-tertiary-container); color: var(--mat-sys-on-tertiary-container); }
     .container { flex: 1; }
     .sidenav { width: 240px; }
-    .content { padding: 24px; }
+    /* border-box : le padding reste inclus dans la hauteur (100 %) de la zone de contenu, sinon le bas des pages
+       dépasse de l'écran et se retrouve coupé */
+    .content { padding: 24px; box-sizing: border-box; }
   `,
 })
 export class Shell {

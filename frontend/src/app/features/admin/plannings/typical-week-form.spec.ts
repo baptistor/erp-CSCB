@@ -1,10 +1,10 @@
 import { FormArray, FormControl, FormGroup } from '@angular/forms';
-import { weekValidator } from './typical-week-form';
+import { dayMinutes, weekValidator } from './typical-week-form';
 
-describe('weekValidator', () => {
-  const week = (min: number, start: string, end: string) =>
+describe('weekValidator (contrat hebdomadaire)', () => {
+  const week = (weekly: number, start: string, end: string) =>
     new FormGroup({
-      minDailyHours: new FormControl(min),
+      weeklyHours: new FormControl(weekly),
       days: new FormArray(
         [1, 2, 3, 4, 5, 6, 7].map(
           (d) =>
@@ -17,17 +17,28 @@ describe('weekValidator', () => {
       ),
     });
 
-  it('accepte la semaine par défaut (9h–17h, minimum 8 h)', () => {
-    expect(weekValidator(week(8, '09:00', '17:00'))).toBeNull();
+  it('accepte la semaine par défaut : 5 × 9h–16h = 35 h pour 35 h', () => {
+    expect(weekValidator(week(35, '09:00', '16:00'))).toBeNull();
   });
 
-  it('signale chaque jour travaillé sous le minimum (pas le week-end)', () => {
-    const errors = weekValidator(week(8, '09:00', '16:00'))?.['days'] as Record<number, string>;
-    expect(Object.keys(errors)).toEqual(['0', '1', '2', '3', '4']);
-    expect(errors[0]).toBe('7 h < minimum de 8 h');
+  it('refuse une semaine sous le contrat (rouge)', () => {
+    expect(weekValidator(week(35, '09:00', '15:00'))).toEqual({ contract: 'under' });
   });
 
-  it('refuse un minimum hors pas de 0,25', () => {
-    expect(weekValidator(week(7.1, '08:00', '17:00'))).toEqual({ min: expect.any(String) });
+  it('refuse une semaine au-dessus du contrat (orange)', () => {
+    expect(weekValidator(week(35, '09:00', '17:00'))).toEqual({ contract: 'over' });
+  });
+
+  it('signale une journée dont la fin est avant le début', () => {
+    expect(weekValidator(week(35, '16:00', '09:00'))?.['days']).toBeTruthy();
+  });
+
+  it('refuse un contrat hors pas de 0,25', () => {
+    expect(weekValidator(week(35.1, '09:00', '16:00'))).toEqual({ weekly: expect.any(String) });
+  });
+
+  it('durée d’un jour (0 si non travaillé)', () => {
+    expect(dayMinutes({ worked: true, startTime: '09:00', endTime: '16:00' })).toBe(420);
+    expect(dayMinutes({ worked: false, startTime: '09:00', endTime: '16:00' })).toBe(0);
   });
 });

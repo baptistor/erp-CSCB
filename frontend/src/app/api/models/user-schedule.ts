@@ -6,7 +6,7 @@ export interface UserSchedule {
   days: Array<TypicalDay>;
 
   /**
-   * Durée minimale d'une journée travaillée, en heures (pas de 0,25)
+   * Contrat hebdomadaire en heures (pas de 0,25, max 168) ; la semaine type doit le totaliser exactement
    */
-  minDailyHours: number;
+  weeklyHours: number;
 }

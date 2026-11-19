@@ -11,17 +11,13 @@ import { PlanningCalendar } from './planning-calendar';
     <h1>Planning</h1>
     <mat-tab-group>
       <mat-tab label="Planning">
-        <p class="hint">
-          Vous pouvez modifier vos propres journées à partir d'aujourd'hui : cliquez sur l'une d'elles,
-          ou sélectionnez un jour libre. Chaque journée travaillée doit respecter votre minimum d'heures.
-        </p>
-        <app-planning-calendar />
+        <div class="tab"><app-planning-calendar /></div>
       </mat-tab>
       <mat-tab label="Mes horaires types">
         <app-typical-week-form [selfOnly]="true" />
       </mat-tab>
     </mat-tab-group>
   `,
-  styles: `.hint { color: var(--mat-sys-on-surface-variant); margin: 16px 0; }`,
+  styles: `.tab { padding-top: 16px; }`,
 })
 export class PlanningPage {}

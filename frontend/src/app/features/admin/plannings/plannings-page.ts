@@ -1,27 +1,50 @@
-import { ChangeDetectionStrategy, Component } from '@angular/core';
+import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { MatTabsModule } from '@angular/material/tabs';
-import { PlanningCalendar } from '../../planning/planning-calendar';
+import { Api } from '../../../api/api';
+import { getUsers } from '../../../api/functions';
+import { UserSummary } from '../../../api/models';
+import { BalancesAdmin } from './balances-admin';
+import { SpecialDaysAdmin } from './special-days-admin';
 import { TypicalWeekForm } from './typical-week-form';
 
+/**
+ * /admin/plannings : semaine type, contrat et horaires modifiés à venir de chaque employé, soldes (spec).
+ * Pas de calendrier éditable ici : depuis le planning, chacun n'agit que sur son propre emploi du temps.
+ */
 @Component({
   selector: 'app-plannings-page',
-  imports: [MatTabsModule, PlanningCalendar, TypicalWeekForm],
+  imports: [MatTabsModule, TypicalWeekForm, SpecialDaysAdmin, BalancesAdmin],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h1>Édition des plannings</h1>
     <mat-tab-group>
-      <mat-tab label="Planning">
-        <p class="hint">
-          Cliquez sur une journée pour la modifier à cette date (journée spéciale), étirez-la ou déplacez-la
-          pour changer ses heures, ou sélectionnez une plage vide pour créer une journée spéciale.
-        </p>
-        <app-planning-calendar [adminMode]="true" />
+      <mat-tab label="Horaires">
+        <app-typical-week-form (userChange)="selectUser($event)" />
+        @if (selectedUser(); as user) {
+          <app-special-days-admin [user]="user" />
+        }
       </mat-tab>
-      <mat-tab label="Horaires types">
-        <app-typical-week-form />
+      <mat-tab label="Soldes">
+        <app-balances-admin />
       </mat-tab>
     </mat-tab-group>
   `,
-  styles: `.hint { color: var(--mat-sys-on-surface-variant); margin: 16px 0; }`,
 })
-export class PlanningsPage {}
+export class PlanningsPage {
+  private readonly api = inject(Api);
+  private readonly users = signal<UserSummary[]>([]);
+  protected readonly selectedUser = signal<UserSummary | null>(null);
+  private pendingId: number | null = null;
+
+  constructor() {
+    void this.api.invoke(getUsers).then((users) => {
+      this.users.set(users);
+      if (this.pendingId != null) this.selectUser(this.pendingId);
+    });
+  }
+
+  protected selectUser(id: number): void {
+    this.pendingId = id;
+    this.selectedUser.set(this.users().find((u) => u.id === id) ?? null);
+  }
+}

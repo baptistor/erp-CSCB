@@ -1,29 +1,42 @@
-import { canEditDay, formatMinutes, isValidMinHours, rangeError } from './schedule-rules';
+import {
+  absenceSelectionAllowed,
+  canEditDay,
+  contractStatus,
+  formatMinutes,
+  isValidWeeklyHours,
+  rangeError,
+} from './schedule-rules';
 
 describe('schedule-rules', () => {
-  it('accepte une journée au moins égale au minimum', () => {
-    expect(rangeError('09:00', '17:00', 8)).toBeNull();
-    expect(rangeError('08:00', '18:00', 8)).toBeNull();
-  });
-
-  it('refuse une journée plus courte que le minimum, avec un message clair', () => {
-    expect(rangeError('09:00', '16:30', 8)).toBe('7 h 30 < minimum de 8 h');
+  it('accepte une journée de n’importe quelle durée (plus de minimum par jour)', () => {
+    expect(rangeError('09:00', '16:00')).toBeNull();
+    expect(rangeError('10:00', '11:00')).toBeNull();
   });
 
   it('refuse fin ≤ début (pas de plage à cheval sur minuit)', () => {
-    expect(rangeError('22:00', '06:00', null)).toBe("L'heure de fin doit être après l'heure de début");
-    expect(rangeError('09:00', '09:00', null)).not.toBeNull();
+    expect(rangeError('22:00', '06:00')).toBe("L'heure de fin doit être après l'heure de début");
+    expect(rangeError('09:00', '09:00')).not.toBeNull();
   });
 
   it('exige début et fin', () => {
-    expect(rangeError('09:00', '', 8)).not.toBeNull();
+    expect(rangeError('09:00', '')).not.toBeNull();
   });
 
-  it('valide le minimum au pas de 0,25', () => {
-    expect(isValidMinHours(7.75)).toBe(true);
-    expect(isValidMinHours(7.1)).toBe(false);
-    expect(isValidMinHours(0)).toBe(false);
-    expect(isValidMinHours(25)).toBe(false);
+  it('valide le contrat au pas de 0,25 h (max 168 h)', () => {
+    expect(isValidWeeklyHours(35)).toBe(true);
+    expect(isValidWeeklyHours(37.5)).toBe(true);
+    expect(isValidWeeklyHours(35.1)).toBe(false);
+    expect(isValidWeeklyHours(0)).toBe(false);
+    expect(isValidWeeklyHours(169)).toBe(false);
+  });
+
+  it('contrat : vert si exact, rouge s’il manque des heures, orange s’il y en a trop', () => {
+    expect(contractStatus(35 * 60, 35)).toEqual({ kind: 'ok', message: '35 h / 35 h — contrat respecté' });
+    expect(contractStatus(33 * 60, 35)).toEqual({ kind: 'under', message: '33 h / 35 h — il manque 2 h' });
+    const over = contractStatus(37 * 60 + 30, 35);
+    expect(over.kind).toBe('over');
+    expect(over.message).toContain('2 h 30 de trop');
+    expect(over.message).toContain("déclaration d'heures supplémentaires");
   });
 
   it('formate les durées', () => {
@@ -53,5 +66,33 @@ describe('canEditDay', () => {
 
   it('personne sans session ne modifie rien', () => {
     expect(canEditDay(null, 2, '2026-12-01', today)).toBe(false);
+  });
+});
+
+describe('absenceSelectionAllowed', () => {
+  const today = '2026-11-19';
+  const myDays = new Map([
+    ['2026-11-19', { start: '09:00', end: '17:00' }],
+    ['2026-11-20', { start: '09:00', end: '17:00' }],
+  ]);
+
+  it('accepte une plage comprise dans ma journée', () => {
+    expect(absenceSelectionAllowed(myDays, { allDay: false, date: '2026-11-20', start: '14:00', end: '16:00' }, today)).toBe(true);
+    expect(absenceSelectionAllowed(myDays, { allDay: false, date: '2026-11-20', start: '09:00', end: '17:00' }, today)).toBe(true);
+  });
+
+  it('refuse une plage qui déborde de mes horaires ou un jour non travaillé', () => {
+    expect(absenceSelectionAllowed(myDays, { allDay: false, date: '2026-11-20', start: '08:00', end: '10:00' }, today)).toBe(false);
+    expect(absenceSelectionAllowed(myDays, { allDay: false, date: '2026-11-21', start: '10:00', end: '12:00' }, today)).toBe(false);
+  });
+
+  it('refuse le passé', () => {
+    const past = new Map([['2026-11-18', { start: '09:00', end: '17:00' }]]);
+    expect(absenceSelectionAllowed(past, { allDay: false, date: '2026-11-18', start: '10:00', end: '12:00' }, today)).toBe(false);
+  });
+
+  it('journées entières : au moins un jour travaillé', () => {
+    expect(absenceSelectionAllowed(myDays, { allDay: true, startDate: '2026-11-20', endDateExclusive: '2026-11-23' }, today)).toBe(true);
+    expect(absenceSelectionAllowed(myDays, { allDay: true, startDate: '2026-11-21', endDateExclusive: '2026-11-23' }, today)).toBe(false);
   });
 });

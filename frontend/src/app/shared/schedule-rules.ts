@@ -14,23 +14,37 @@ export function formatMinutes(minutes: number): string {
   return m === 0 ? `${h} h` : `${h} h ${String(m).padStart(2, '0')}`;
 }
 
-/**
- * Erreur d'une journée travaillée, ou null si valide.
- * Fin > début (donc pas à cheval sur minuit) et durée ≥ minimum (si connu).
- */
-export function rangeError(start: string, end: string, minHours: number | null): string | null {
+/** Erreur d'une journée travaillée, ou null si valide : fin > début (donc pas à cheval sur minuit). */
+export function rangeError(start: string, end: string): string | null {
   if (!start || !end) return 'Renseignez le début et la fin';
-  const duration = toMinutes(end) - toMinutes(start);
-  if (duration <= 0) return "L'heure de fin doit être après l'heure de début";
-  if (minHours != null && duration < minHours * 60) {
-    return `${formatMinutes(duration)} < minimum de ${formatMinutes(minHours * 60)}`;
-  }
-  return null;
+  return toMinutes(end) - toMinutes(start) <= 0 ? "L'heure de fin doit être après l'heure de début" : null;
 }
 
-/** Minimum d'heures : entre 0,25 et 24, par pas de 0,25. */
-export function isValidMinHours(value: number | null): boolean {
-  return value != null && value > 0 && value <= 24 && Number.isInteger(value * 4);
+/** Contrat hebdomadaire : entre 0,25 et 168 h, par pas de 0,25. */
+export function isValidWeeklyHours(value: number | null): boolean {
+  return value != null && value > 0 && value <= 168 && Number.isInteger(value * 4);
+}
+
+/** État de la semaine type par rapport au contrat (spec §1) : vert / rouge / orange. */
+export interface ContractStatus {
+  kind: 'ok' | 'under' | 'over';
+  message: string;
+}
+
+export function contractStatus(totalMinutes: number, weeklyHours: number): ContractStatus {
+  const contract = Math.round(weeklyHours * 60);
+  const summary = `${formatMinutes(totalMinutes)} / ${formatMinutes(contract)}`;
+  if (totalMinutes === contract) return { kind: 'ok', message: `${summary} — contrat respecté` };
+  if (totalMinutes < contract) {
+    return { kind: 'under', message: `${summary} — il manque ${formatMinutes(contract - totalMinutes)}` };
+  }
+  return {
+    kind: 'over',
+    message:
+      `${summary} — ${formatMinutes(totalMinutes - contract)} de trop : la semaine type doit rester au contrat. ` +
+      'Déclarez les heures en plus sur le planning (journée concernée), puis faites une déclaration ' +
+      "d'heures supplémentaires dans « Mes demandes ».",
+  };
 }
 
 /**
@@ -46,4 +60,35 @@ export function canEditDay(
   if (!me) return false;
   if (me.role === 'ADMIN') return true;
   return me.id === ownerId && date >= today;
+}
+
+/** Journée prévue (travaillée) d'un employé : 'HH:mm' → 'HH:mm'. */
+export interface WorkedRange {
+  start: string;
+  end: string;
+}
+
+/**
+ * Une sélection d'absence est-elle autorisée (spec §3) ? À partir d'aujourd'hui et sur ses propres horaires :
+ * - plage horaire : un seul jour travaillé, comprise dans la journée prévue ;
+ * - journées entières (dates de fin exclusive) : au moins un jour travaillé.
+ * `myDays` : journées travaillées de l'utilisateur, indexées par date 'YYYY-MM-DD'.
+ */
+export function absenceSelectionAllowed(
+  myDays: Map<string, WorkedRange>,
+  selection:
+    | { allDay: true; startDate: string; endDateExclusive: string }
+    | { allDay: false; date: string; start: string; end: string },
+  today: string,
+): boolean {
+  if (selection.allDay) {
+    if (selection.startDate < today) return false;
+    for (const [date] of myDays) {
+      if (date >= selection.startDate && date < selection.endDateExclusive) return true;
+    }
+    return false;
+  }
+  if (selection.date < today) return false;
+  const day = myDays.get(selection.date);
+  return !!day && selection.start >= day.start && selection.end <= day.end && selection.end > selection.start;
 }

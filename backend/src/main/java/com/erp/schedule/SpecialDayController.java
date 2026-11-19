@@ -19,7 +19,7 @@ import com.erp.schedule.ScheduleDtos.SpecialDayInput;
 import jakarta.validation.Valid;
 
 /**
- * Journées spéciales. Droits contrôlés dans le service : ADMIN pour tous ; EMPLOYEE pour ses propres
+ * Horaires modifiés d'un jour (ressource technique « special-days »). Droits contrôlés dans le service : ADMIN pour tous ; EMPLOYEE pour ses propres
  * journées, à partir d'aujourd'hui.
  */
 @RestController

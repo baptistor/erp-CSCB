@@ -20,12 +20,14 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.convention.TestBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import com.erp.TestcontainersConfiguration;
+import com.erp.common.TimeConfig;
 
-/** Journées types, journées spéciales, minimum d'heures et planning calculé (spec §1). */
+/** Journées types, contrat hebdomadaire, horaires modifiés d'un jour et planning calculé (spec §1). */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("dev")
@@ -36,8 +38,16 @@ class ScheduleControllerTest {
 
 	static final String EMPLOYEE = "alice.martin@exemple.fr";
 
-	/** Semaine du lundi 1er mars 2027 (dans le futur : soumise au contrôle du minimum). */
+	/** Semaine du lundi 1er mars 2027 (dans le futur). */
 	static final String MONDAY = "2027-03-01";
+
+	/** « Aujourd'hui » = vendredi 1er janvier 2027 : mars 2027 est à venir, 2020 est passé. */
+	@TestBean
+	java.time.Clock clock;
+
+	static java.time.Clock clock() {
+		return java.time.Clock.fixed(java.time.Instant.parse("2027-01-01T09:00:00Z"), TimeConfig.PARIS);
+	}
 
 	@Autowired
 	MockMvc mvc;
@@ -51,7 +61,7 @@ class ScheduleControllerTest {
 	void setUp() {
 		jdbc.update("delete from special_day");
 		jdbc.update("delete from absence_request");
-		jdbc.update("update app_user set min_daily_hours = 8");
+		jdbc.update("update app_user set weekly_hours = 35");
 		jdbc.update("""
 				update typical_day set start_time = case when day_of_week <= 5 then time '09:00' end,
 				                       end_time   = case when day_of_week <= 5 then time '17:00' end""");
@@ -65,7 +75,7 @@ class ScheduleControllerTest {
 		mvc.perform(get("/api/planning").param("from", MONDAY).param("to", "2027-03-08"))
 			.andExpect(status().isUnauthorized());
 		mvc.perform(get("/api/users/" + aliceId + "/schedule")).andExpect(status().isUnauthorized());
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("8", "09:00", "17:00")))
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35", "09:00", "16:00")))
 			.andExpect(status().isUnauthorized());
 		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "08:00", "18:00")))
 			.andExpect(status().isUnauthorized());
@@ -131,98 +141,104 @@ class ScheduleControllerTest {
 	}
 
 	@Test
-	void employee_sousSonMinimum_400() throws Exception {
-		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "09:00", "16:00"))
-			.header("X-Dev-User", EMPLOYEE))
-			.andExpect(status().isBadRequest())
-			.andExpect(jsonPath("$.detail", containsString("7 h < minimum de 8 h")));
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("8", "09:00", "16:00")).header("X-Dev-User",
+	void employee_journeeSpecialeSansContrainteDeDuree_maisSemaineAuContrat() throws Exception {
+		// des horaires de jour courts sont permis (plus de minimum par jour)
+		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "10:00", "12:00"))
+			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isCreated());
+		// la semaine type doit rester au contrat : 5 × 6 h = 30 h ≠ 35 h
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35", "09:00", "15:00")).header("X-Dev-User",
 				EMPLOYEE))
-			.andExpect(status().isBadRequest());
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("il manque 5 h")));
 	}
 
 	@Test
-	void employee_modifieSaSemaine_maisPasSonMinimum() throws Exception {
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("8", "08:00", "16:00")).header("X-Dev-User",
+	void employee_modifieSaSemaine_maisPasSonContrat() throws Exception {
+		// 5 × 7 h = 35 h : contrat respecté
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35", "08:00", "15:00")).header("X-Dev-User",
 				EMPLOYEE))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.days[0].startTime").value("08:00"));
 
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("7", "08:00", "15:00")).header("X-Dev-User",
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("40", "08:00", "16:00")).header("X-Dev-User",
 				EMPLOYEE))
 			.andExpect(status().isForbidden())
-			.andExpect(jsonPath("$.detail").value("Seul un admin peut modifier le minimum d'heures"));
-		assertThat(jdbc.queryForObject("select min_daily_hours from app_user where id = ?", Integer.class, aliceId))
-			.isEqualTo(8);
+			.andExpect(jsonPath("$.detail").value("Seul un admin peut modifier le contrat hebdomadaire"));
+		assertThat(jdbc.queryForObject("select weekly_hours from app_user where id = ?", Integer.class, aliceId))
+			.isEqualTo(35);
 	}
 
 	@Test
 	void employee_semaineDUnAutre_403() throws Exception {
-		mvc.perform(json(put("/api/users/" + adminId() + "/schedule"), week("8", "08:00", "16:00")).header("X-Dev-User",
+		mvc.perform(json(put("/api/users/" + adminId() + "/schedule"), week("35", "08:00", "15:00")).header("X-Dev-User",
 				EMPLOYEE))
 			.andExpect(status().isForbidden());
 	}
 
-	// ---------- semaine type + minimum ----------
+	// ---------- semaine type + contrat hebdomadaire ----------
 
 	@Test
-	void premierLogin_semaineParDefaut() throws Exception {
+	void premierLogin_semaineParDefaut_35h() throws Exception {
 		mvc.perform(get("/api/me").header("X-Dev-User", "nouvelle.recrue@exemple.fr")).andExpect(status().isOk());
 		long id = jdbc.queryForObject("select id from app_user where email = 'nouvelle.recrue@exemple.fr'",
 				Long.class);
 		mvc.perform(get("/api/users/" + id + "/schedule").header("X-Dev-User", ADMIN))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.minDailyHours").value(8))
+			.andExpect(jsonPath("$.weeklyHours").value(35))
 			.andExpect(jsonPath("$.days.length()").value(7))
 			.andExpect(jsonPath("$.days[0].dayOfWeek").value(1))
 			.andExpect(jsonPath("$.days[0].startTime").value("09:00"))
-			.andExpect(jsonPath("$.days[4].endTime").value("17:00"))
+			.andExpect(jsonPath("$.days[4].endTime").value("16:00"))
 			.andExpect(jsonPath("$.days[5].startTime").doesNotExist())
 			.andExpect(jsonPath("$.days[6].startTime").doesNotExist());
 	}
 
 	@Test
-	void admin_modifieSemaineEtMinimum() throws Exception {
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("7.5", "08:30", "16:00")).header("X-Dev-User",
+	void admin_modifieSemaineEtContrat() throws Exception {
+		// 5 × 7,5 h = 37,5 h pour un contrat de 37,5 h
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("37.5", "08:30", "16:00")).header("X-Dev-User",
 				ADMIN))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.minDailyHours").value(7.5))
+			.andExpect(jsonPath("$.weeklyHours").value(37.5))
 			.andExpect(jsonPath("$.days[0].startTime").value("08:30"));
 	}
 
 	@Test
-	void semaine_sousLeMinimum_400_avecMessageClair() throws Exception {
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("8", "09:00", "16:00")).header("X-Dev-User",
+	void semaine_sousLeContrat_400() throws Exception {
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35", "09:00", "15:00")).header("X-Dev-User",
 				ADMIN))
 			.andExpect(status().isBadRequest())
-			.andExpect(jsonPath("$.detail", containsString("Lundi : 7 h < minimum de 8 h")));
+			.andExpect(jsonPath("$.detail").value("Semaine type : 30 h pour un contrat de 35 h — il manque 5 h"));
 	}
 
 	@Test
-	void hausseDuMinimum_refuseeSiJourneeSpecialeFutureTropCourte() throws Exception {
-		insertSpecial("2027-03-03", "09:00", "17:00"); // 8 h
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("9", "08:00", "17:00")).header("X-Dev-User",
+	void semaine_auDessusDuContrat_400_heuresSupADeclarer() throws Exception {
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35", "09:00", "17:00")).header("X-Dev-User",
 				ADMIN))
 			.andExpect(status().isBadRequest())
-			.andExpect(jsonPath("$.detail", containsString("Journée spéciale du 03/03/2027")));
+			.andExpect(jsonPath("$.detail", containsString("40 h pour un contrat de 35 h — 5 h de trop")))
+			.andExpect(jsonPath("$.detail", containsString("déclaration d'heures supplémentaires")));
+		// rien n'a été enregistré
+		assertThat(jdbc.queryForObject("select end_time::text from typical_day where user_id = ? and day_of_week = 1",
+				String.class, aliceId)).isEqualTo("17:00:00");
 	}
 
 	@Test
 	void semaine_invalide_400() throws Exception {
-		// minimum pas au pas de 0,25
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("7.1", "08:00", "17:00")).header("X-Dev-User",
+		// contrat pas au pas de 0,25
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35.1", "09:00", "16:00")).header("X-Dev-User",
 				ADMIN)).andExpect(status().isBadRequest());
 		// fin avant début
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("1", "17:00", "09:00")).header("X-Dev-User",
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35", "16:00", "09:00")).header("X-Dev-User",
 				ADMIN)).andExpect(status().isBadRequest());
 		// 6 jours seulement
 		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), """
-				{"minDailyHours": 8, "days": [%s]}""".formatted(String.join(",",
-				java.util.stream.IntStream.rangeClosed(1, 6).mapToObj(d -> day(d, "09:00", "17:00")).toList())))
+				{"weeklyHours": 35, "days": [%s]}""".formatted(String.join(",",
+				java.util.stream.IntStream.rangeClosed(1, 6).mapToObj(d -> day(d, "09:00", "16:00")).toList())))
 			.header("X-Dev-User", ADMIN)).andExpect(status().isBadRequest());
 	}
 
-	// ---------- journées spéciales ----------
+	// ---------- horaires modifiés d'un jour ----------
 
 	@Test
 	void admin_creeModifieSupprimeJourneeSpeciale() throws Exception {
@@ -236,7 +252,7 @@ class ScheduleControllerTest {
 		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", null, null))
 			.header("X-Dev-User", ADMIN)).andExpect(status().isConflict());
 
-		// passage en « non travaillé » (pas soumis au minimum)
+		// passage en « non travaillé »
 		mvc.perform(json(put("/api/special-days/" + id), special(aliceId, "2027-03-03", null, null))
 			.header("X-Dev-User", ADMIN))
 			.andExpect(status().isOk())
@@ -248,10 +264,6 @@ class ScheduleControllerTest {
 
 	@Test
 	void journeeSpeciale_invalide() throws Exception {
-		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "09:00", "16:00"))
-			.header("X-Dev-User", ADMIN))
-			.andExpect(status().isBadRequest())
-			.andExpect(jsonPath("$.detail", containsString("7 h < minimum de 8 h")));
 		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "18:00", "08:00"))
 			.header("X-Dev-User", ADMIN)).andExpect(status().isBadRequest());
 		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "08:00", null))
@@ -271,15 +283,17 @@ class ScheduleControllerTest {
 		long pending = insertAbsence("2027-03-05", "PENDING");
 
 		String alice = "$.days[?(@.userId == " + aliceId + ")]";
-		mvc.perform(get("/api/planning").param("from", MONDAY).param("to", "2027-03-08").header("X-Dev-User", EMPLOYEE))
+		// vu par un autre employé : les absences en attente d'Alice ne lui sont pas visibles (spec §3)
+		mvc.perform(get("/api/planning").param("from", MONDAY).param("to", "2027-03-08").header("X-Dev-User",
+				"bruno.durand@exemple.fr"))
 			.andExpect(status().isOk())
 			// lundi : journée type
 			.andExpect(jsonPath(alice + "[?(@.date == '2027-03-01')].startTime").value("09:00"))
 			.andExpect(jsonPath(alice + "[?(@.date == '2027-03-01')].specialDayId").value(hasItem((Object) null)))
-			// mercredi : journée spéciale
+			// mercredi : horaires modifiés
 			.andExpect(jsonPath(alice + "[?(@.date == '2027-03-03')].startTime").value("08:00"))
 			.andExpect(jsonPath(alice + "[?(@.date == '2027-03-03')].specialDayId").value((int) wednesday))
-			// jeudi : spéciale non travaillée, renvoyée sans horaires
+			// jeudi : modifié en non travaillé, renvoyé sans horaires
 			.andExpect(jsonPath(alice + "[?(@.date == '2027-03-04')].specialDayId").value((int) thursday))
 			.andExpect(jsonPath(alice + "[?(@.date == '2027-03-04')].startTime").value(hasItem((Object) null)))
 			// week-end : rien
@@ -310,12 +324,12 @@ class ScheduleControllerTest {
 	}
 
 	/** Semaine lundi→vendredi start–end, week-end non travaillé. */
-	private static String week(String min, String start, String end) {
+	private static String week(String contract, String start, String end) {
 		var days = java.util.stream.IntStream.rangeClosed(1, 7)
 			.mapToObj(d -> d <= 5 ? day(d, start, end) : day(d, null, null))
 			.toList();
 		return """
-				{"minDailyHours": %s, "days": [%s]}""".formatted(min, String.join(",", days));
+				{"weeklyHours": %s, "days": [%s]}""".formatted(contract, String.join(",", days));
 	}
 
 	private static String special(long userId, String date, String start, String end) {

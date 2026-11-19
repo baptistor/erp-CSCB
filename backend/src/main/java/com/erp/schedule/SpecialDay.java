@@ -10,7 +10,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Journée spéciale : remplace la journée type d'un employé à une date précise. */
+/** Horaires modifiés d'un jour précis pour un employé (remplacent la semaine type ce jour-là). Nom technique. */
 @Entity
 @Table(name = "special_day")
 public class SpecialDay {

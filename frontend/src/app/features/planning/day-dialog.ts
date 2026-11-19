@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { toSignal } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
   NonNullableFormBuilder,
@@ -14,10 +14,8 @@ import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/materia
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
 import { MatSelectModule } from '@angular/material/select';
-import { Api } from '../../api/api';
-import { getUserSchedule } from '../../api/functions';
 import { SpecialDayInput, UserSummary } from '../../api/models';
-import { formatMinutes, rangeError } from '../../shared/schedule-rules';
+import { rangeError } from '../../shared/schedule-rules';
 import { fullName } from '../../shared/user-color';
 
 export interface DayDialogData {
@@ -32,14 +30,12 @@ export interface DayDialogData {
 
 export type DayDialogResult = { action: 'save'; input: SpecialDayInput } | { action: 'reset' };
 
-/** Validateur de groupe : si « travaillé », plage valide et durée ≥ minimum. */
-export function workedDayValidator(minHours: () => number | null): ValidatorFn {
-  return (group: AbstractControl): ValidationErrors | null => {
-    if (!group.get('worked')?.value) return null;
-    const error = rangeError(group.get('startTime')?.value, group.get('endTime')?.value, minHours());
-    return error ? { range: error } : null;
-  };
-}
+/** Validateur de groupe : si « travaillé », fin après début (pas de contrainte de durée, spec §1). */
+export const workedDayValidator: ValidatorFn = (group: AbstractControl): ValidationErrors | null => {
+  if (!group.get('worked')?.value) return null;
+  const error = rangeError(group.get('startTime')?.value, group.get('endTime')?.value);
+  return error ? { range: error } : null;
+};
 
 @Component({
   selector: 'app-day-dialog',
@@ -54,11 +50,11 @@ export function workedDayValidator(minHours: () => number | null): ValidatorFn {
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h2 mat-dialog-title>{{ data.existing ? 'Modifier la journée' : 'Nouvelle journée spéciale' }}</h2>
+    <h2 mat-dialog-title>Horaires du jour</h2>
     <form [formGroup]="form" (ngSubmit)="save()">
       <mat-dialog-content class="fields">
         <p class="info">
-          Une journée spéciale remplace la journée type de l'employé pour cette date.
+          Ces horaires ne s'appliquent qu'à cette date ; la semaine type ne change pas.
         </p>
         <mat-form-field appearance="outline">
           <mat-label>Employé</mat-label>
@@ -84,9 +80,6 @@ export function workedDayValidator(minHours: () => number | null): ValidatorFn {
               <input matInput type="time" step="900" formControlName="endTime" />
             </mat-form-field>
           </div>
-          @if (minHours() != null) {
-            <p class="hint">Minimum pour cet employé : {{ formatHours(minHours()!) }}</p>
-          }
         }
         @if (form.errors?.['range']; as error) {
           <p class="error">{{ error }}</p>
@@ -94,7 +87,7 @@ export function workedDayValidator(minHours: () => number | null): ValidatorFn {
       </mat-dialog-content>
       <mat-dialog-actions>
         @if (data.existing?.specialDayId) {
-          <button mat-button type="button" class="reset" (click)="reset()">Revenir à la journée type</button>
+          <button mat-button type="button" class="reset" (click)="reset()">Remettre les horaires habituels</button>
         }
         <span class="spacer"></span>
         <button mat-button type="button" mat-dialog-close>Annuler</button>
@@ -116,10 +109,7 @@ export function workedDayValidator(minHours: () => number | null): ValidatorFn {
 export class DayDialog {
   protected readonly data = inject<DayDialogData>(MAT_DIALOG_DATA);
   private readonly ref = inject<MatDialogRef<DayDialog, DayDialogResult>>(MatDialogRef);
-  private readonly api = inject(Api);
   private readonly fb = inject(NonNullableFormBuilder);
-
-  protected readonly minHours = signal<number | null>(null);
 
   protected readonly form = this.fb.group(
     {
@@ -127,9 +117,9 @@ export class DayDialog {
       date: [this.data.initial.date, Validators.required],
       worked: [this.data.initial.startTime != null || !this.data.existing],
       startTime: [this.data.initial.startTime ?? '09:00'],
-      endTime: [this.data.initial.endTime ?? '17:00'],
+      endTime: [this.data.initial.endTime ?? '16:00'],
     },
-    { validators: workedDayValidator(() => this.minHours()) },
+    { validators: workedDayValidator },
   );
 
   protected readonly worked = toSignal(this.form.controls.worked.valueChanges, {
@@ -137,7 +127,6 @@ export class DayDialog {
   });
 
   protected readonly name = fullName;
-  protected readonly formatHours = (hours: number) => formatMinutes(hours * 60);
 
   constructor() {
     if (this.data.existing) {
@@ -147,22 +136,6 @@ export class DayDialog {
     if (this.data.lockUser) {
       this.form.controls.userId.disable();
     }
-    this.form.controls.userId.valueChanges
-      .pipe(takeUntilDestroyed())
-      .subscribe((id) => void this.loadMinHours(id));
-    void this.loadMinHours(this.form.controls.userId.value);
-  }
-
-  private async loadMinHours(userId: number | null): Promise<void> {
-    this.minHours.set(null);
-    if (userId == null) return;
-    try {
-      const schedule = await this.api.invoke(getUserSchedule, { userId });
-      this.minHours.set(schedule.minDailyHours);
-    } catch {
-      // le serveur validera de toute façon
-    }
-    this.form.updateValueAndValidity();
   }
 
   protected save(): void {
