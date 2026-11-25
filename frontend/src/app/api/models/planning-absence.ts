@@ -5,8 +5,7 @@ import { LocalTime } from '../models/local-time';
 import { RequestStatus } from '../models/request-status';
 
 /**
- * Absence affichée au planning, sans type ni commentaire : APPROVED (visible par tous) ou PENDING de
- * l'utilisateur connecté. startTime/endTime null = journées entières.
+ * Absence affichée au planning, sans type ni commentaire : PENDING ou APPROVED, visible par tous. startTime/endTime null = journées entières.
  */
 export interface PlanningAbsence {
 

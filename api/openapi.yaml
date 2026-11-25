@@ -45,7 +45,7 @@ paths:
     get:
       operationId: getPlanning
       tags: [planning]
-      summary: Horaires calculés (horaires modifiés du jour sinon semaine type) et absences approuvées de tous les employés
+      summary: Horaires (journée type + heures ajoutées) et absences (en attente et acceptées) de tous les employés
       parameters:
         - name: from
           in: query
@@ -83,7 +83,7 @@ paths:
     get:
       operationId: getUserSchedule
       tags: [schedule]
-      summary: Semaine type et contrat hebdomadaire d'un employé (lecture pour tous)
+      summary: Semaines type (classique, vacances) et contrat hebdomadaire d'un employé (lecture pour tous)
       responses:
         '200':
           description: Horaires de l'employé
@@ -98,10 +98,10 @@ paths:
     put:
       operationId: updateUserSchedule
       tags: [schedule]
-      summary: Modifie la semaine type et le contrat hebdomadaire (ADMIN, ou l'employé pour lui-même)
+      summary: Modifie les semaines type et le contrat hebdomadaire (ADMIN, ou l'employé pour lui-même)
       description: |
         ADMIN : tout employé. EMPLOYEE : sa propre semaine uniquement, sans changer son contrat (403 sinon).
-        La semaine type doit totaliser exactement le contrat hebdomadaire (400 sinon, avec un message indiquant
+        Chaque semaine type doit totaliser exactement le contrat hebdomadaire (400 sinon, avec un message indiquant
         les heures manquantes ou en trop).
       requestBody:
         required: true
@@ -124,12 +124,64 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /school-holiday-weeks:
+    get:
+      operationId: getSchoolHolidayWeeks
+      tags: [schedule]
+      summary: Semaines de vacances scolaires (lundis), lecture pour tous
+      responses:
+        '200':
+          description: Lundis des semaines marquées, triés
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+                  format: date
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /school-holiday-weeks/{weekStart}:
+    parameters:
+      - name: weekStart
+        in: path
+        required: true
+        description: Lundi de la semaine, strictement à venir (400 sinon)
+        schema:
+          type: string
+          format: date
+    put:
+      operationId: markSchoolHolidayWeek
+      tags: [schedule]
+      summary: Marque une semaine de vacances scolaires (ADMIN)
+      responses:
+        '204':
+          description: Marquée
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    delete:
+      operationId: unmarkSchoolHolidayWeek
+      tags: [schedule]
+      summary: Retire le marquage d'une semaine de vacances scolaires (ADMIN)
+      responses:
+        '204':
+          description: Retirée
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /special-days:
     post:
       operationId: createSpecialDay
       tags: [schedule]
-      summary: Modifie les horaires d'un jour précis (la semaine type ne change pas)
-      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
+      summary: Ajoute des heures à un jour, en dehors de la journée type
+      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé). Une plage ne doit pas empiéter sur la journée type ni sur la pause 12:30–13:30 (400) ni sur d'autres heures ajoutées (409)."
       requestBody:
         required: true
         content:
@@ -138,7 +190,7 @@ paths:
               $ref: '#/components/schemas/SpecialDayInput'
       responses:
         '201':
-          description: Horaires du jour enregistrés
+          description: Heures ajoutées enregistrées
           content:
             application/json:
               schema:
@@ -164,8 +216,8 @@ paths:
     put:
       operationId: updateSpecialDay
       tags: [schedule]
-      summary: Change les horaires déjà modifiés d'un jour
-      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
+      summary: Modifie des heures ajoutées
+      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé). Une plage ne doit pas empiéter sur la journée type ni sur la pause 12:30–13:30 (400) ni sur d'autres heures ajoutées (409)."
       requestBody:
         required: true
         content:
@@ -174,7 +226,7 @@ paths:
               $ref: '#/components/schemas/SpecialDayInput'
       responses:
         '200':
-          description: Horaires du jour enregistrés
+          description: Heures ajoutées enregistrées
           content:
             application/json:
               schema:
@@ -192,11 +244,13 @@ paths:
     delete:
       operationId: deleteSpecialDay
       tags: [schedule]
-      summary: Remet les horaires habituels du jour (ceux de la semaine type)
+      summary: Retire des heures ajoutées
       description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
       responses:
         '204':
           description: Supprimée
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -498,7 +552,7 @@ components:
           schema:
             $ref: '#/components/schemas/ProblemDetail'
     Conflict:
-      description: Conflit (ex. horaires déjà modifiés pour ce jour)
+      description: Conflit (ex. chevauchement avec des heures déjà ajoutées)
       content:
         application/problem+json:
           schema:
@@ -561,7 +615,7 @@ components:
       example: '08:30'
     TypicalDay:
       type: object
-      description: Journée type. startTime et endTime absents/null = non travaillé.
+      description: Journée type, matin (fin ≤ 12:30) et après-midi (début ≥ 13:30), chacun facultatif (null). Aucun = non travaillé.
       required: [dayOfWeek]
       properties:
         dayOfWeek:
@@ -569,11 +623,19 @@ components:
           minimum: 1
           maximum: 7
           description: 1 = lundi … 7 = dimanche
-        startTime:
+        morningStart:
           oneOf:
             - $ref: '#/components/schemas/LocalTime'
             - type: 'null'
-        endTime:
+        morningEnd:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        afternoonStart:
+          oneOf:
+            - $ref: '#/components/schemas/LocalTime'
+            - type: 'null'
+        afternoonEnd:
           oneOf:
             - $ref: '#/components/schemas/LocalTime'
             - type: 'null'
@@ -589,12 +651,20 @@ components:
           type: array
           minItems: 7
           maxItems: 7
+          description: Semaine classique
+          items:
+            $ref: '#/components/schemas/TypicalDay'
+        holidayDays:
+          type: [array, 'null']
+          minItems: 7
+          maxItems: 7
+          description: Semaine de vacances scolaires ; null = à compléter (reprend la semaine classique)
           items:
             $ref: '#/components/schemas/TypicalDay'
     SpecialDayInput:
       type: object
-      description: startTime et endTime null = non travaillé ce jour-là.
-      required: [userId, date]
+      description: Plage d'heures ajoutée à un jour, en dehors de la journée type.
+      required: [userId, date, startTime, endTime]
       properties:
         userId:
           type: integer
@@ -603,16 +673,12 @@ components:
           type: string
           format: date
         startTime:
-          oneOf:
-            - $ref: '#/components/schemas/LocalTime'
-            - type: 'null'
+          $ref: '#/components/schemas/LocalTime'
         endTime:
-          oneOf:
-            - $ref: '#/components/schemas/LocalTime'
-            - type: 'null'
+          $ref: '#/components/schemas/LocalTime'
     SpecialDay:
       type: object
-      required: [id, userId, date]
+      required: [id, userId, date, startTime, endTime]
       properties:
         id:
           type: integer
@@ -624,21 +690,15 @@ components:
           type: string
           format: date
         startTime:
-          oneOf:
-            - $ref: '#/components/schemas/LocalTime'
-            - type: 'null'
+          $ref: '#/components/schemas/LocalTime'
         endTime:
-          oneOf:
-            - $ref: '#/components/schemas/LocalTime'
-            - type: 'null'
+          $ref: '#/components/schemas/LocalTime'
     PlanningDay:
       type: object
       description: |
-        Journée calculée d'un employé (horaires modifiés du jour sinon semaine type). Les jours non travaillés de la
-        semaine type ne sont pas renvoyés ; un jour aux horaires modifiés l'est toujours (specialDayId non null, identifiant
-        technique), même non travaillé
-        (startTime/endTime null).
-      required: [userId, date]
+        Plage travaillée d'un employé : journée type (specialDayId null, matin et après-midi) ou heures ajoutées
+        (specialDayId renseigné, plusieurs possibles).
+      required: [userId, date, startTime, endTime]
       properties:
         userId:
           type: integer
@@ -647,21 +707,16 @@ components:
           type: string
           format: date
         startTime:
-          oneOf:
-            - $ref: '#/components/schemas/LocalTime'
-            - type: 'null'
+          $ref: '#/components/schemas/LocalTime'
         endTime:
-          oneOf:
-            - $ref: '#/components/schemas/LocalTime'
-            - type: 'null'
+          $ref: '#/components/schemas/LocalTime'
         specialDayId:
           type: [integer, 'null']
           format: int64
     PlanningAbsence:
       type: object
       description: |
-        Absence affichée au planning, sans type ni commentaire : APPROVED (visible par tous) ou PENDING de
-        l'utilisateur connecté. startTime/endTime null = journées entières.
+        Absence affichée au planning, sans type ni commentaire : PENDING ou APPROVED, visible par tous. startTime/endTime null = journées entières.
       required: [id, userId, startDate, endDate, status]
       properties:
         id:
@@ -689,7 +744,7 @@ components:
           $ref: '#/components/schemas/RequestStatus'
     Planning:
       type: object
-      required: [days, absences]
+      required: [days, absences, holidayWeeks]
       properties:
         days:
           type: array
@@ -699,6 +754,12 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/PlanningAbsence'
+        holidayWeeks:
+          type: array
+          description: Lundis des semaines de vacances scolaires touchant la période
+          items:
+            type: string
+            format: date
     RequestStatus:
       type: string
       enum: [PENDING, APPROVED, REJECTED, CANCELLED]
@@ -748,8 +809,8 @@ components:
       type: object
       description: |
         Absence posée sur le planning (spec §3) : plage horaire d'un seul jour (startTime + endTime, au quart d'heure,
-        comprise dans la journée prévue) ou journées entières (sans heures). Le nombre d'heures est calculé par le
-        serveur (durée de la plage, ou somme des heures prévues des jours travaillés).
+        commençant et finissant pendant les heures prévues, pause et coupures non comptées) ou journées entières (sans heures). Le nombre d'heures est calculé par le
+        serveur (heures travaillées couvertes, ou somme des heures prévues des jours travaillés).
       required: [type, startDate]
       properties:
         type:

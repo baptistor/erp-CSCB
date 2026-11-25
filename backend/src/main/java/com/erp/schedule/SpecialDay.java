@@ -10,7 +10,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Horaires modifiés d'un jour précis pour un employé (remplacent la semaine type ce jour-là). Nom technique. */
+/** Plage d'heures ajoutée à un jour, en dehors de la journée type (plusieurs par jour possibles). Nom technique. */
 @Entity
 @Table(name = "special_day")
 public class SpecialDay {
@@ -25,8 +25,10 @@ public class SpecialDay {
 	@Column(nullable = false)
 	private LocalDate dayDate;
 
+	@Column(nullable = false)
 	private LocalTime startTime;
 
+	@Column(nullable = false)
 	private LocalTime endTime;
 
 	protected SpecialDay() {

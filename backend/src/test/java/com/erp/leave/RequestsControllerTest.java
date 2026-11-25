@@ -38,7 +38,7 @@ import com.erp.common.TimeConfig;
 
 /**
  * Heures sup (§2), absences posées sur le planning (§3), solde d'heures sup, workflow commun et droits.
- * Semaine type de référence : lundi → vendredi 9h–17h (8 h), week-end non travaillé. Lundi 4 janvier 2027.
+ * Semaine type de référence : lundi → vendredi 9h–12h30 / 13h30–18h (8 h), week-end non travaillé. Lundi 4 janvier 2027.
  * Horloge fixée au dimanche 3 janvier 2027 23:30 UTC, soit lundi 4 janvier 00:30 à Paris : « aujourd'hui » = lundi.
  */
 @SpringBootTest
@@ -91,9 +91,13 @@ class RequestsControllerTest {
 		jdbc.update("delete from balance_adjustment");
 		jdbc.update("delete from special_day");
 		jdbc.update("update app_user set weekly_hours = 35");
+		jdbc.update("delete from school_holiday_week");
+		jdbc.update("delete from typical_day where week_type = 'HOLIDAY'");
 		jdbc.update("""
-				update typical_day set start_time = case when day_of_week <= 5 then time '09:00' end,
-				                       end_time   = case when day_of_week <= 5 then time '17:00' end""");
+				update typical_day set morning_start   = case when day_of_week <= 5 then time '09:00' end,
+				                       morning_end     = case when day_of_week <= 5 then time '12:30' end,
+				                       afternoon_start = case when day_of_week <= 5 then time '13:30' end,
+				                       afternoon_end   = case when day_of_week <= 5 then time '18:00' end""");
 		aliceId = jdbc.queryForObject("select id from app_user where email = ?", Long.class, ALICE);
 	}
 
@@ -275,8 +279,49 @@ class RequestsControllerTest {
 	}
 
 	@Test
-	void journeeEntiere_tientCompteDUneJourneeSpeciale() throws Exception {
-		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values (?, ?::date, '08:00', '18:00')",
+	void absence_tientCompteDesHeuresAjoutees_etDeLaCoupure() throws Exception {
+		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values "
+				+ "(?, ?::date, '19:00', '21:00'), (?, ?::date, '18:00', '18:30')", aliceId, TUE, aliceId, TUE);
+		// dans la plage ajoutée ; à cheval sur journée type + plage collée : OK
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "19:00", "20:00").andExpect(status().isCreated());
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "16:30", "18:00").andExpect(status().isCreated())
+			.andExpect(jsonPath("$.hours").value(1.5));
+		// commencer dans la coupure : refusé
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "18:00", "18:30").andExpect(status().isCreated());
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "18:45", "20:30").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("(09:00–12:30, 13:30–18:30, 19:00–21:00)")));
+	}
+
+	@Test
+	void absence_enjambeLaCoupure_heuresTravailleesSeulement() throws Exception {
+		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values (?, ?::date, '19:00', '21:00')",
+				aliceId, TUE);
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "17:00", "20:00").andExpect(status().isCreated())
+			.andExpect(jsonPath("$.hours").value(2));
+	}
+
+	@Test
+	void absence_enjambeLaPauseDeMidi_nonComptee_maisNiDebutNiFinDedans() throws Exception {
+		for (String[] r : new String[][] { { "12:30", "13:30" }, { "12:45", "15:00" }, { "12:30", "15:00" },
+				{ "11:00", "13:00" }, { "11:00", "13:30" } }) {
+			absence(ALICE, "SANS_SOLDE", TUE, TUE, r[0], r[1]).andExpect(status().isBadRequest());
+		}
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "11:00", "15:00").andExpect(status().isCreated())
+			.andExpect(jsonPath("$.hours").value(3));
+	}
+
+	@Test
+	void journeeEntiere_enVacances_heuresDeLaSemaineDeVacances() throws Exception {
+		jdbc.update("insert into school_holiday_week values (?::date)", MON);
+		jdbc.update("insert into typical_day (user_id, week_type, day_of_week, morning_start, morning_end) "
+				+ "select ?, 'HOLIDAY', d, '09:00', '12:00' from generate_series(1, 7) d", aliceId);
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, null, null).andExpect(status().isCreated())
+			.andExpect(jsonPath("$.hours").value(3));
+	}
+
+	@Test
+	void journeeEntiere_heuresAjouteesComprises() throws Exception {
+		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values (?, ?::date, '19:00', '21:00')",
 				aliceId, TUE);
 		absence(ALICE, "SANS_SOLDE", TUE, TUE, null, null).andExpect(status().isCreated())
 			.andExpect(jsonPath("$.hours").value(10));
@@ -284,17 +329,17 @@ class RequestsControllerTest {
 
 	@Test
 	void horairesNonAlignes_plageRogneeAuQuartDHeure_acceptee() throws Exception {
-		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values (?, ?::date, '09:10', '17:10')",
-				aliceId, TUE);
+		jdbc.update("update typical_day set morning_start = '09:10', afternoon_end = '17:10' where user_id = ? and day_of_week = 2",
+				aliceId);
 		// ce que le front envoie après rognage au quart d'heure à l'intérieur des horaires
 		absence(ALICE, "SANS_SOLDE", TUE, TUE, "09:15", "17:00").andExpect(status().isCreated())
-			.andExpect(jsonPath("$.hours").value(7.75));
+			.andExpect(jsonPath("$.hours").value(6.75));
 	}
 
 	@Test
 	void absenceTropLongue_400_etPas500() throws Exception {
-		// 7 jours travaillés de 00:00 à 23:45 sur 62 jours ≈ 1 472 h > 999 h (capacité de la colonne)
-		jdbc.update("update typical_day set start_time = '00:00', end_time = '23:45' where user_id = ?", aliceId);
+		// 7 jours travaillés de 00:00 à 23:45 sur 62 jours ≈ 1 410 h > 999 h (capacité de la colonne)
+		jdbc.update("update typical_day set morning_start = '00:00', morning_end = '12:30', afternoon_start = '13:30', afternoon_end = '23:45' where user_id = ?", aliceId);
 		absence(ALICE, "SANS_SOLDE", MON, "2027-03-06", null, null).andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail", containsString("ne peut pas dépasser 999 h")));
 	}
@@ -310,8 +355,8 @@ class RequestsControllerTest {
 	@Test
 	void plage_horsDesHorairesPrevus_400() throws Exception {
 		absence(ALICE, "SANS_SOLDE", MON, MON, "08:00", "10:00").andExpect(status().isBadRequest())
-			.andExpect(jsonPath("$.detail", containsString("comprise dans vos horaires du 04/01/2027 (09:00–17:00)")));
-		absence(ALICE, "SANS_SOLDE", MON, MON, "16:00", "18:00").andExpect(status().isBadRequest());
+			.andExpect(jsonPath("$.detail", containsString("pendant vos horaires du 04/01/2027 (09:00–12:30, 13:30–18:00)")));
+		absence(ALICE, "SANS_SOLDE", MON, MON, "16:00", "19:00").andExpect(status().isBadRequest());
 	}
 
 	@Test
@@ -403,9 +448,9 @@ class RequestsControllerTest {
 	void chevauchement_auQuartDHeurePres() throws Exception {
 		absence(ALICE, "SANS_SOLDE", MON, MON, "09:00", "12:00").andExpect(status().isCreated());
 		// contiguë : OK
-		absence(ALICE, "SANS_SOLDE", MON, MON, "12:00", "14:00").andExpect(status().isCreated());
-		// chevauche 13:00–14:00
-		absence(ALICE, "SANS_SOLDE", MON, MON, "13:00", "15:00").andExpect(status().isBadRequest())
+		absence(ALICE, "SANS_SOLDE", MON, MON, "12:00", "14:30").andExpect(status().isCreated());
+		// chevauche 14:00–14:30
+		absence(ALICE, "SANS_SOLDE", MON, MON, "14:00", "15:00").andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail", containsString("chevauche")));
 		// journée entière sur un jour déjà partiellement pris
 		absence(ALICE, "SANS_SOLDE", MON, TUE, null, null).andExpect(status().isBadRequest());
@@ -458,15 +503,17 @@ class RequestsControllerTest {
 	}
 
 	@Test
-	void planning_absenceEnAttente_visibleUniquementParSonAuteur() throws Exception {
+	void planning_absenceEnAttente_visibleParTous_sansTypeNiMotif() throws Exception {
 		long id = createdId(absence(ALICE, "SANS_SOLDE", MON, MON, "14:00", "16:00"));
-		mvc.perform(get("/api/planning").param("from", MON).param("to", "2027-01-11").header("X-Dev-User", ALICE))
-			.andExpect(jsonPath("$.absences[0].id").value((int) id))
-			.andExpect(jsonPath("$.absences[0].status").value("PENDING"));
+		for (String viewer : new String[] { ALICE, BRUNO, ADMIN }) {
+			mvc.perform(get("/api/planning").param("from", MON).param("to", "2027-01-11").header("X-Dev-User", viewer))
+				.andExpect(jsonPath("$.absences[0].id").value((int) id))
+				.andExpect(jsonPath("$.absences[0].status").value("PENDING"))
+				.andExpect(jsonPath("$.absences[0].type").doesNotExist())
+				.andExpect(jsonPath("$.absences[0].comment").doesNotExist());
+		}
+		json(post("/api/admin/absence-requests/" + id + "/decision"), decision(false), ADMIN).andExpect(status().isOk());
 		mvc.perform(get("/api/planning").param("from", MON).param("to", "2027-01-11").header("X-Dev-User", BRUNO))
-			.andExpect(jsonPath("$.absences").isEmpty());
-		// même un admin ne voit pas les absences en attente des autres au planning
-		mvc.perform(get("/api/planning").param("from", MON).param("to", "2027-01-11").header("X-Dev-User", ADMIN))
 			.andExpect(jsonPath("$.absences").isEmpty());
 	}
 

@@ -4,14 +4,16 @@
 import { LocalTime } from '../models/local-time';
 
 /**
- * Journée type. startTime et endTime absents/null = non travaillé.
+ * Journée type, matin (fin ≤ 12:30) et après-midi (début ≥ 13:30), chacun facultatif (null). Aucun = non travaillé.
  */
 export interface TypicalDay {
+  afternoonEnd?: (LocalTime | null);
+  afternoonStart?: (LocalTime | null);
 
   /**
    * 1 = lundi … 7 = dimanche
    */
   dayOfWeek: number;
-  endTime?: (LocalTime | null);
-  startTime?: (LocalTime | null);
+  morningEnd?: (LocalTime | null);
+  morningStart?: (LocalTime | null);
 }

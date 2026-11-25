@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, computed, input, output, signal } from '@angular/core';
 import { PlanningAbsence, PlanningDay, UserSummary } from '../../api/models';
+import { BREAK } from '../../shared/schedule-rules';
 import { colorFor, fullName, tint } from '../../shared/user-color';
 import {
   blockPosition,
@@ -11,7 +12,11 @@ import {
   toTime,
 } from './week-grid-layout';
 
-const HOUR_HEIGHT_PX = 40;
+/** Hauteur d'une heure : ajustée pour que la journée tienne à l'écran, dans ces limites. */
+const HOUR_HEIGHT_MIN_PX = 26;
+const HOUR_HEIGHT_MAX_PX = 48;
+/** Place prise au-dessus et sous la grille horaire (bandeau, onglets, navigation, en-têtes des jours, marges). */
+const CHROME_PX = 290;
 const DAY_LABELS = ['dim.', 'lun.', 'mar.', 'mer.', 'jeu.', 'ven.', 'sam.'];
 
 export interface RangeSelection {
@@ -25,12 +30,19 @@ export interface DaysSelection {
   endDate: string;
 }
 
+/** Clic sur une de mes plages : extraId renseigné pour des heures ajoutées, null pour la journée type. */
+export interface OwnDayClick {
+  date: string;
+  extraId: number | null;
+}
+
 interface Drag {
   dayIndex: number;
   startY: number;
   currentY: number;
   height: number;
   ownDayClick: boolean;
+  extraId: number | null;
 }
 
 /**
@@ -41,9 +53,10 @@ interface Drag {
 @Component({
   selector: 'app-week-grid',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { '(window:resize)': 'onResize()' },
   template: `
-    <div class="wg" [class.selectable]="selectable()" [style.--n]="people().length"
-         [style.--day-min]="dayMinWidth()" [style.--hour-h]="hourHeight + 'px'">
+    <div class="wg" [class.selectable]="selectable()" [class.dense]="people().length > 6" [style.--n]="people().length"
+         [style.--day-min]="dayMinWidth()" [style.--hour-h]="hourHeight() + 'px'">
       <div class="row head">
         <div class="axis"></div>
         @for (day of days(); track day) {
@@ -75,9 +88,6 @@ interface Drag {
                     }
                   </div>
                 }
-                @if (offDay(p.id, day)) {
-                  <div class="off" [title]="name(p) + ' — non travaillé'">Repos</div>
-                }
               </div>
             }
           </div>
@@ -96,10 +106,10 @@ interface Drag {
                (pointercancel)="drag.set(null)">
             @for (p of people(); track p.id; let pi = $index) {
               <div class="sub" [style.left.%]="pi * 100 / people().length" [style.width.%]="100 / people().length">
-                @if (work(p.id, day); as w) {
+                @for (w of work(p.id, day); track w.startTime) {
                   <div class="work" [class.mine]="p.id === meId()"
-                       [style.top.%]="pos(w.startTime!, w.endTime!).top" [style.height.%]="pos(w.startTime!, w.endTime!).height"
-                       [style.background]="color(p.id)" [title]="workTitle(p, w)" [attr.data-own-day]="p.id === meId() ? day : null">
+                       [style.top.%]="pos(w.startTime, w.endTime).top" [style.height.%]="pos(w.startTime, w.endTime).height"
+                       [style.background]="color(p.id)" [title]="workTitle(p, w)" [attr.data-own-day]="p.id === meId() ? day : null" [attr.data-extra]="w.specialDayId">
                     @if (people().length <= 2) {
                       <span class="label">{{ w.startTime }}–{{ w.endTime }}</span>
                     }
@@ -129,6 +139,9 @@ interface Drag {
                 }
               </div>
             }
+            <!-- pause de midi : par-dessus tout, non sélectionnable -->
+            <div class="break" title="Pause de midi 12:30–13:30" [style.top.%]="breakPos().top"
+                 [style.height.%]="breakPos().height" (pointerdown)="$event.stopPropagation()"></div>
             @if (preview(); as pv) {
               @if (pv.dayIndex === di) {
                 <div class="preview" [style.top.%]="pv.top" [style.height.%]="pv.height">{{ pv.label }}</div>
@@ -145,10 +158,11 @@ interface Drag {
   styles: `
     :host { display: block; overflow-x: auto; }
     .wg { --axis-w: 56px; min-width: calc(var(--axis-w) + 7 * var(--day-min)); user-select: none;
-      border: 1px solid var(--mat-sys-outline-variant); border-radius: 12px; overflow: hidden;
-      background: var(--mat-sys-surface); }
+      border: 1px solid var(--mat-sys-outline-variant); border-radius: 12px; overflow: clip;
+      background: var(--planning-bg, var(--mat-sys-surface)); }
     .row { display: grid; grid-template-columns: var(--axis-w) repeat(7, minmax(var(--day-min), 1fr)); }
-    .axis { border-right: 1px solid var(--mat-sys-outline-variant); }
+    /* colonne des heures figée pendant le défilement horizontal (overflow: clip ci-dessus, hidden l'empêcherait) */
+    .axis { position: sticky; left: 0; z-index: 4; background: var(--planning-bg, var(--mat-sys-surface)); border-right: 1px solid var(--mat-sys-outline-variant); }
     .head { border-bottom: 1px solid var(--mat-sys-outline-variant); }
     .day-head { padding: 6px 2px 4px; text-align: center; border-left: 1px solid var(--mat-sys-outline-variant); }
     .day-head .dow { font: var(--mat-sys-label-small); text-transform: uppercase; color: var(--mat-sys-on-surface-variant); }
@@ -158,17 +172,16 @@ interface Drag {
     .people { display: flex; margin-top: 4px; }
     .initials { flex: 1; min-width: 0; font: 600 10px/16px sans-serif; color: #fff; overflow: hidden; margin: 0 1px;
       border-radius: 4px; }
+    .dense .initials { font-size: 9px; letter-spacing: -0.3px; border-radius: 3px; }
+    .dense .work, .dense .absence, .dense .absence-day { border-radius: 3px; }
     .allday { border-bottom: 1px solid var(--mat-sys-outline-variant); min-height: 28px; }
     .allday-label { font: var(--mat-sys-label-small); color: var(--mat-sys-on-surface-variant); padding: 4px; }
     .allday-cell { display: flex; border-left: 1px solid var(--mat-sys-outline-variant); min-height: 28px; }
     .allday-cell .sub { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 2px 1px; }
     .allday-cell .absence { position: relative; font: var(--mat-sys-label-small); padding: 2px 4px; overflow: hidden;
       white-space: nowrap; }
-    .off { font: var(--mat-sys-label-small); color: var(--mat-sys-on-surface-variant); background: #e8eaed;
-      border-radius: 4px; padding: 2px 4px; overflow: hidden; white-space: nowrap; }
     .selectable .allday-cell, .selectable .day-col { cursor: crosshair; }
     .allday-cell.selecting { background: color-mix(in srgb, var(--mat-sys-primary) 18%, transparent); }
-    .hours { position: relative; }
     .hour { position: absolute; right: 6px; transform: translateY(-50%); font: var(--mat-sys-label-small);
       color: var(--mat-sys-on-surface-variant); }
     .day-col { position: relative; border-left: 1px solid var(--mat-sys-outline-variant);
@@ -179,18 +192,19 @@ interface Drag {
     .work { position: absolute; left: 1px; right: 1px; border-radius: 4px; opacity: 0.85; overflow: hidden; }
     .work .label { display: block; padding: 2px 4px; font: 600 11px/14px sans-serif; color: #fff; }
     /* absence : par-dessus les horaires, dans la colonne de l'employé */
-    .absence { z-index: 1; border-radius: 4px; border: 1px solid var(--c);
+    .absence { box-sizing: border-box; z-index: 1; border-radius: 4px; border: 1px solid var(--c);
       background: repeating-linear-gradient(45deg, var(--t) 0 5px, rgba(255, 255, 255, 0.95) 5px 10px); }
     .body .absence { position: absolute; left: 1px; right: 1px; }
     .absence.pending { border-style: dashed; border-color: #5f6368;
       background: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.95) 0 5px, #c5c9ce 5px 10px); }
     /* absences à la journée : neutres (gris), quel que soit l'employé */
-    .allday-cell .absence.neutral { border-color: #5f6368; color: #202124; font-weight: 600;
+    .allday-cell .absence.neutral { border: 1px solid #5f6368; color: #202124; font-weight: 600;
       background: repeating-linear-gradient(135deg, rgba(95, 99, 104, 0.45) 0 3px, #eceff1 3px 9px); }
     .allday-cell .absence.neutral.pending { border-style: dashed;
       background: repeating-linear-gradient(135deg, rgba(95, 99, 104, 0.2) 0 3px, #fff 3px 9px); }
     .absence-day { position: absolute; top: 0; bottom: 0; left: 1px; right: 1px; z-index: 1; border-radius: 4px;
-      border: 1px solid #5f6368; display: flex; align-items: center; justify-content: center; overflow: hidden;
+      border: 1px solid #5f6368; display: flex; align-items: flex-end; justify-content: center; overflow: hidden;
+      padding-bottom: 8px; box-sizing: border-box;
       background: repeating-linear-gradient(135deg, #9aa0a6 0 3px, #eceff1 3px 11px); }
     .absence-day.pending { border-style: dashed;
       background: repeating-linear-gradient(135deg, #d5d8dc 0 3px, #fafafa 3px 11px); }
@@ -199,7 +213,13 @@ interface Drag {
     .cancel { position: absolute; top: 2px; right: 2px; z-index: 3; width: 18px; height: 18px; padding: 0; border: none;
       border-radius: 50%; background: var(--mat-sys-error); color: var(--mat-sys-on-error); font: 700 13px/18px sans-serif;
       cursor: pointer; }
-    .preview { position: absolute; left: 0; right: 0; z-index: 2; border-radius: 4px; pointer-events: none;
+    .break { position: absolute; left: 0; right: 0; z-index: 2; background: #e4e6e9; cursor: not-allowed;
+      border-block: 1px solid var(--mat-sys-outline-variant); box-sizing: border-box; }
+    /* colonnes étroites : la croix et le repère « journée » tiennent dans 14 px */
+    .dense .cancel { right: 0; left: 0; margin: 0 auto; width: 12px; height: 16px; border-radius: 4px; font: 700 11px/16px sans-serif; }
+    .dense .allday-cell .absence { padding: 0; font-size: 0; min-height: 20px; }
+    .dense .absence-day { justify-content: center; }
+    .preview { box-sizing: border-box; position: absolute; left: 0; right: 0; z-index: 2; border-radius: 4px; pointer-events: none;
       background: color-mix(in srgb, var(--mat-sys-primary) 25%, transparent); border: 2px solid var(--mat-sys-primary);
       font: 600 11px/14px sans-serif; color: var(--mat-sys-on-primary-container); padding: 2px 4px; }
     .now { position: absolute; left: 0; right: 0; z-index: 2; height: 2px; background: #d93025; pointer-events: none; }
@@ -224,10 +244,10 @@ export class WeekGrid {
   readonly rangeSelected = output<RangeSelection>();
   readonly daysSelected = output<DaysSelection>();
   /** Clic simple sur une de mes journées. */
-  readonly ownDayClicked = output<string>();
+  readonly ownDayClicked = output<OwnDayClick>();
   readonly cancelAbsence = output<number>();
 
-  protected readonly hourHeight = HOUR_HEIGHT_PX;
+  private readonly windowHeight = signal(window.innerHeight);
   protected readonly drag = signal<Drag | null>(null);
   private readonly daysDrag = signal<{ from: number; to: number } | null>(null);
 
@@ -235,19 +255,22 @@ export class WeekGrid {
   protected readonly name = fullName;
   protected readonly init = initials;
 
+  protected onResize(): void {
+    this.windowHeight.set(window.innerHeight);
+  }
+
   private key(userId: number, date: string): string {
     return `${userId}|${date}`;
   }
 
-  /** Jours travaillés et jours modifiés en « non travaillé », indexés par personne et date. */
-  private readonly dayIndex = computed(() => {
-    const worked = new Map<string, PlanningDay>();
-    const off = new Set<string>();
+  /** Plages travaillées (journée type + heures ajoutées), indexées par personne et date. */
+  private readonly workIndex = computed(() => {
+    const index = new Map<string, PlanningDay[]>();
     for (const d of this.planningDays()) {
-      if (d.startTime && d.endTime) worked.set(this.key(d.userId, d.date), d);
-      else if (d.specialDayId != null) off.add(this.key(d.userId, d.date));
+      const k = this.key(d.userId, d.date);
+      index.set(k, [...(index.get(k) ?? []), d]);
     }
-    return { worked, off };
+    return index;
   });
 
   /** Absences par personne et date (une absence sur plusieurs jours apparaît chaque jour). */
@@ -266,25 +289,28 @@ export class WeekGrid {
   });
 
   protected readonly bounds = computed(() =>
-    gridBounds(
-      this.planningDays()
-        .filter((d) => d.startTime && d.endTime)
-        .map((d) => ({ start: d.startTime!, end: d.endTime! })),
-    ),
+    gridBounds(this.planningDays().map((d) => ({ start: d.startTime, end: d.endTime }))),
   );
 
-  protected readonly gridHeight = computed(() => ((this.bounds().end - this.bounds().start) / 60) * HOUR_HEIGHT_PX);
+  protected readonly breakPos = computed(() => blockPosition(BREAK.start, BREAK.end, this.bounds()));
+
+  protected readonly hourHeight = computed(() => {
+    const fit = Math.floor((this.windowHeight() - CHROME_PX) / ((this.bounds().end - this.bounds().start) / 60));
+    return Math.min(Math.max(fit, HOUR_HEIGHT_MIN_PX), HOUR_HEIGHT_MAX_PX);
+  });
+
+  protected readonly gridHeight = computed(() => ((this.bounds().end - this.bounds().start) / 60) * this.hourHeight());
 
   protected readonly hourLabels = computed(() => {
     const labels: { label: string; top: number }[] = [];
     for (let m = this.bounds().start + 60; m < this.bounds().end; m += 60) {
-      labels.push({ label: `${String(m / 60).padStart(2, '0')} h`, top: ((m - this.bounds().start) / 60) * HOUR_HEIGHT_PX });
+      labels.push({ label: `${String(m / 60).padStart(2, '0')} h`, top: ((m - this.bounds().start) / 60) * this.hourHeight() });
     }
     return labels;
   });
 
-  /** Largeur minimale d'un jour : 24 px par personne (défilement horizontal au-delà). */
-  protected readonly dayMinWidth = computed(() => `${Math.max(this.people().length * 24, 90)}px`);
+  /** Largeur minimale d'un jour : 14 px par personne (défilement horizontal au-delà). */
+  protected readonly dayMinWidth = computed(() => `${Math.max(this.people().length * 14, 90)}px`);
 
   protected readonly nowTop = computed(() => {
     const now = new Date();
@@ -301,12 +327,8 @@ export class WeekGrid {
     return { dayIndex: drag.dayIndex, ...p, label: `${toTime(range.start)}–${toTime(range.end)}` };
   });
 
-  protected work(userId: number, date: string): PlanningDay | undefined {
-    return this.dayIndex().worked.get(this.key(userId, date));
-  }
-
-  protected offDay(userId: number, date: string): boolean {
-    return this.dayIndex().off.has(this.key(userId, date));
+  protected work(userId: number, date: string): PlanningDay[] {
+    return this.workIndex().get(this.key(userId, date)) ?? [];
   }
 
   protected timedAbsences(userId: number, date: string): PlanningAbsence[] {
@@ -373,6 +395,7 @@ export class WeekGrid {
       currentY: y,
       height: rect.height,
       ownDayClick: target.closest('[data-own-day]') != null,
+      extraId: Number(target.closest('[data-extra]')?.getAttribute('data-extra')) || null,
     });
   }
 
@@ -391,7 +414,7 @@ export class WeekGrid {
     this.drag.set(null);
     const date = this.days()[drag.dayIndex];
     if (this.ownDayClickable() && drag.ownDayClick && Math.abs(endY - drag.startY) < CLICK_TOLERANCE_PX) {
-      this.ownDayClicked.emit(date);
+      this.ownDayClicked.emit({ date, extraId: drag.extraId });
       return;
     }
     const range = selectionRange(drag.startY, endY, drag.height, this.bounds());

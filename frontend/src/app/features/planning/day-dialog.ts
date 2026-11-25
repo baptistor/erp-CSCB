@@ -1,109 +1,80 @@
-import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import {
-  AbstractControl,
-  NonNullableFormBuilder,
-  ReactiveFormsModule,
-  ValidationErrors,
-  ValidatorFn,
-  Validators,
-} from '@angular/forms';
+import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
-import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
 import { SpecialDayInput, UserSummary } from '../../api/models';
-import { rangeError } from '../../shared/schedule-rules';
+import { extraError, formatMinutes, toMinutes, WorkedRange } from '../../shared/schedule-rules';
 import { fullName } from '../../shared/user-color';
 
 export interface DayDialogData {
-  users: UserSummary[];
-  /** Valeurs initiales (journée cliquée ou sélection). */
-  initial: { userId?: number; date: string; startTime?: string | null; endTime?: string | null };
-  /** Journée existante : l'employé et la date ne sont plus modifiables. */
-  existing?: { specialDayId: number | null };
-  /** Employé imposé (un employé ne crée que ses propres journées). */
-  lockUser?: boolean;
+  user: UserSummary;
+  initial: { date: string; startTime: string; endTime: string };
+  /** Plage ajoutée existante : la date n'est plus modifiable, la plage peut être retirée. */
+  existing?: boolean;
+  /** Date imposée (jour sélectionné sur le planning). */
+  lockDate?: boolean;
+  /** Journée type et autres heures déjà ajoutées à une date (vides si inconnues : le serveur vérifie). */
+  dayOf: (date: string) => { typical: WorkedRange[]; others: WorkedRange[] };
 }
 
-export type DayDialogResult = { action: 'save'; input: SpecialDayInput } | { action: 'reset' };
+export type DayDialogResult = { action: 'save'; input: SpecialDayInput } | { action: 'remove' };
 
-/** Validateur de groupe : si « travaillé », fin après début (pas de contrainte de durée, spec §1). */
-export const workedDayValidator: ValidatorFn = (group: AbstractControl): ValidationErrors | null => {
-  if (!group.get('worked')?.value) return null;
-  const error = rangeError(group.get('startTime')?.value, group.get('endTime')?.value);
-  return error ? { range: error } : null;
-};
-
+/** « Ajouter des heures » à un jour, en dehors de la journée type et de la pause de midi (spec §1). */
 @Component({
   selector: 'app-day-dialog',
-  imports: [
-    ReactiveFormsModule,
-    MatButtonModule,
-    MatCheckboxModule,
-    MatDialogModule,
-    MatFormFieldModule,
-    MatInputModule,
-    MatSelectModule,
-  ],
+  imports: [ReactiveFormsModule, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h2 mat-dialog-title>Horaires du jour</h2>
+    <h2 mat-dialog-title>{{ data.existing ? 'Heures ajoutées' : 'Ajouter des heures' }}</h2>
     <form [formGroup]="form" (ngSubmit)="save()">
       <mat-dialog-content class="fields">
         <p class="info">
-          Ces horaires ne s'appliquent qu'à cette date ; la semaine type ne change pas.
+          {{ name }} — journée type :
+          <strong>{{ typicalText() }}</strong>.
+          Pensez à déclarer ces heures dans « Mes demandes ».
         </p>
-        <mat-form-field appearance="outline">
-          <mat-label>Employé</mat-label>
-          <mat-select formControlName="userId">
-            @for (user of data.users; track user.id) {
-              <mat-option [value]="user.id">{{ name(user) }}</mat-option>
-            }
-          </mat-select>
-        </mat-form-field>
         <mat-form-field appearance="outline">
           <mat-label>Date</mat-label>
           <input matInput type="date" formControlName="date" />
         </mat-form-field>
-        <mat-checkbox formControlName="worked">Jour travaillé</mat-checkbox>
-        @if (worked()) {
-          <div class="row">
-            <mat-form-field appearance="outline">
-              <mat-label>Début</mat-label>
-              <input matInput type="time" step="900" formControlName="startTime" />
-            </mat-form-field>
-            <mat-form-field appearance="outline">
-              <mat-label>Fin</mat-label>
-              <input matInput type="time" step="900" formControlName="endTime" />
-            </mat-form-field>
-          </div>
-        }
-        @if (form.errors?.['range']; as error) {
-          <p class="error">{{ error }}</p>
+        <div class="row">
+          <mat-form-field appearance="outline">
+            <mat-label>Début</mat-label>
+            <input matInput type="time" step="900" formControlName="startTime" />
+          </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>Fin</mat-label>
+            <input matInput type="time" step="900" formControlName="endTime" />
+          </mat-form-field>
+        </div>
+        @if (error()) {
+          <p class="error">{{ error() }}</p>
+        } @else {
+          <p class="added">+ {{ added() }}</p>
         }
       </mat-dialog-content>
       <mat-dialog-actions>
-        @if (data.existing?.specialDayId) {
-          <button mat-button type="button" class="reset" (click)="reset()">Remettre les horaires habituels</button>
+        @if (data.existing) {
+          <button mat-button type="button" class="remove" (click)="remove()">Retirer ces heures</button>
         }
         <span class="spacer"></span>
         <button mat-button type="button" mat-dialog-close>Annuler</button>
-        <button mat-flat-button type="submit" [disabled]="form.invalid">Enregistrer</button>
+        <button mat-flat-button type="submit" [disabled]="form.invalid || error() !== null">Enregistrer</button>
       </mat-dialog-actions>
     </form>
   `,
   styles: `
     .fields { display: flex; flex-direction: column; min-width: min(380px, 80vw); padding-top: 8px; }
-    .row { display: flex; gap: 12px; margin-top: 12px; }
+    .row { display: flex; gap: 12px; }
     .row mat-form-field { flex: 1; }
-    .info, .hint { color: var(--mat-sys-on-surface-variant); margin: 0 0 12px; font: var(--mat-sys-body-small); }
-    .hint { margin: 0; }
-    .error { color: var(--mat-sys-error); margin: 8px 0 0; }
+    .info { color: var(--mat-sys-on-surface-variant); margin: 0 0 12px; font: var(--mat-sys-body-small); }
+    .added { margin: 0; font: var(--mat-sys-title-small); }
+    .error { color: var(--mat-sys-error); margin: 0; }
     .spacer { flex: 1; }
-    .reset { color: var(--mat-sys-error); }
+    .remove { color: var(--mat-sys-error); }
   `,
 })
 export class DayDialog {
@@ -111,48 +82,35 @@ export class DayDialog {
   private readonly ref = inject<MatDialogRef<DayDialog, DayDialogResult>>(MatDialogRef);
   private readonly fb = inject(NonNullableFormBuilder);
 
-  protected readonly form = this.fb.group(
-    {
-      userId: this.fb.control<number | null>(this.data.initial.userId ?? null, Validators.required),
-      date: [this.data.initial.date, Validators.required],
-      worked: [this.data.initial.startTime != null || !this.data.existing],
-      startTime: [this.data.initial.startTime ?? '09:00'],
-      endTime: [this.data.initial.endTime ?? '16:00'],
-    },
-    { validators: workedDayValidator },
-  );
-
-  protected readonly worked = toSignal(this.form.controls.worked.valueChanges, {
-    initialValue: this.form.controls.worked.value,
+  protected readonly name = fullName(this.data.user);
+  protected readonly form = this.fb.group({
+    date: [{ value: this.data.initial.date, disabled: !!(this.data.existing || this.data.lockDate) }, Validators.required],
+    startTime: [this.data.initial.startTime, Validators.required],
+    endTime: [this.data.initial.endTime, Validators.required],
   });
 
-  protected readonly name = fullName;
-
-  constructor() {
-    if (this.data.existing) {
-      this.form.controls.userId.disable();
-      this.form.controls.date.disable();
-    }
-    if (this.data.lockUser) {
-      this.form.controls.userId.disable();
-    }
-  }
+  private readonly changes = toSignal(this.form.valueChanges);
+  private readonly value = computed(() => {
+    this.changes();
+    return this.form.getRawValue();
+  });
+  protected readonly day = computed(() => this.data.dayOf(this.value().date));
+  protected readonly typicalText = computed(
+    () => this.day().typical.map((t) => `${t.start}–${t.end}`).join(' / ') || 'non travaillée',
+  );
+  protected readonly error = computed(() =>
+    extraError({ start: this.value().startTime, end: this.value().endTime }, this.day().typical, this.day().others),
+  );
+  protected readonly added = computed(() =>
+    formatMinutes(toMinutes(this.value().endTime) - toMinutes(this.value().startTime)),
+  );
 
   protected save(): void {
-    if (this.form.invalid) return;
-    const value = this.form.getRawValue();
-    this.ref.close({
-      action: 'save',
-      input: {
-        userId: value.userId!,
-        date: value.date,
-        startTime: value.worked ? value.startTime : null,
-        endTime: value.worked ? value.endTime : null,
-      },
-    });
+    if (this.form.invalid || this.error()) return;
+    this.ref.close({ action: 'save', input: { userId: this.data.user.id, ...this.form.getRawValue() } });
   }
 
-  protected reset(): void {
-    this.ref.close({ action: 'reset' });
+  protected remove(): void {
+    this.ref.close({ action: 'remove' });
   }
 }

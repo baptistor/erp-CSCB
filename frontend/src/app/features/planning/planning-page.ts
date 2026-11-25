@@ -8,7 +8,8 @@ import { PlanningCalendar } from './planning-calendar';
   imports: [MatTabsModule, PlanningCalendar, TypicalWeekForm],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h1>Planning</h1>
+    <!-- l'onglet et le menu portent déjà le titre : masqué à l'écran pour laisser la place au calendrier -->
+    <h1 class="cdk-visually-hidden">Planning</h1>
     <mat-tab-group>
       <mat-tab label="Planning">
         <div class="tab"><app-planning-calendar /></div>
@@ -18,6 +19,9 @@ import { PlanningCalendar } from './planning-calendar';
       </mat-tab>
     </mat-tab-group>
   `,
-  styles: `.tab { padding-top: 16px; }`,
+  styles: `
+    :host { display: block; margin: -20px 0 -12px; --mat-tab-container-height: 40px; }
+    .tab { padding-top: 4px; }
+  `,
 })
 export class PlanningPage {}

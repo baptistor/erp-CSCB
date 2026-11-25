@@ -1,93 +1,94 @@
-import { ChangeDetectionStrategy, Component, computed, input, output } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { MatButtonModule } from '@angular/material/button';
 import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MatIconModule } from '@angular/material/icon';
 import { UserSummary } from '../../api/models';
 import { colorFor, fullName } from '../../shared/user-color';
+import { PeopleStore } from './people-store';
 
-const STORAGE_KEY = 'erp.planning.visible';
+const SMALL_SCREEN_PX = 900;
 
-/** Collaborateurs affichés mémorisés sur le navigateur (préférence locale, spec §1). */
-export function loadVisible(): number[] | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const ids = raw ? (JSON.parse(raw) as unknown) : null;
-    return Array.isArray(ids) ? ids.filter((id): id is number => typeof id === 'number') : null;
-  } catch {
-    return null;
-  }
+const normalize = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim();
+
+/** Recherche par prénom et/ou nom, sans tenir compte des accents ni des majuscules. */
+export function searchPeople(users: UserSummary[], query: string): UserSummary[] {
+  const words = normalize(query).split(/\s+/).filter(Boolean);
+  return users.filter((u) => words.every((word) => normalize(fullName(u)).includes(word)));
 }
 
-export function saveVisible(ids: number[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
-  } catch {
-    // stockage indisponible : le choix vaut pour la session
-  }
-}
-
-/**
- * Personnes affichées, dans l'ordre de la grille : soi d'abord (toujours affiché), puis les collaborateurs cochés
- * dans l'ordre de la liste (alphabétique).
- */
-export function visiblePeople(users: UserSummary[], meId: number | null, selected: ReadonlySet<number>): UserSummary[] {
-  const me = users.filter((u) => u.id === meId);
-  return [...me, ...users.filter((u) => u.id !== meId && selected.has(u.id))];
-}
-
-/** « Tout le monde » + une case par collaborateur (à sa couleur) pour afficher / masquer son emploi du temps. */
+/** Menu de gauche : recherche + liste à cocher des emplois du temps affichés, comme Google Agenda (spec §1). */
 @Component({
   selector: 'app-people-filter',
-  imports: [MatButtonModule, MatCheckboxModule],
+  imports: [MatButtonModule, MatCheckboxModule, MatIconModule],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <div class="filter" role="group" aria-label="Emplois du temps affichés">
-      <span class="label">Afficher :</span>
-      <button mat-stroked-button type="button" (click)="toggleAll()">
-        {{ allSelected() ? 'Seulement moi' : 'Tout le monde' }}
+    <button class="head" type="button" [attr.aria-expanded]="open()" (click)="open.set(!open())">
+      <span>Emplois du temps</span>
+      <mat-icon>{{ open() ? 'expand_less' : 'expand_more' }}</mat-icon>
+    </button>
+    @if (open()) {
+      <label class="search">
+        <mat-icon>search</mat-icon>
+        <input type="search" placeholder="Rechercher" aria-label="Rechercher un collaborateur"
+               [value]="query()" (input)="query.set($any($event.target).value)" />
+      </label>
+      <button mat-button type="button" class="all" (click)="store.toggleAll()">
+        {{ store.allSelected() ? 'Seulement moi' : 'Tout le monde' }}
       </button>
-      @for (user of others(); track user.id) {
-        <mat-checkbox [checked]="selected().has(user.id)" (change)="toggle(user.id, $event.checked)"
-                      [style.--mat-checkbox-selected-icon-color]="color(user.id)"
-                      [style.--mat-checkbox-selected-focus-icon-color]="color(user.id)"
-                      [style.--mat-checkbox-selected-hover-icon-color]="color(user.id)">
-          <span class="name"><span class="dot" [style.background]="color(user.id)"></span>{{ name(user) }}</span>
-        </mat-checkbox>
-      }
-    </div>
+      <div class="list" role="group" aria-label="Emplois du temps affichés">
+        @for (user of results(); track user.id) {
+          <mat-checkbox [checked]="isMe(user) || store.selected().has(user.id)" [disabled]="isMe(user)"
+                        (change)="store.toggle(user.id, $event.checked)"
+                        [style.--mat-checkbox-selected-icon-color]="color(user.id)"
+                        [style.--mat-checkbox-selected-focus-icon-color]="color(user.id)"
+                        [style.--mat-checkbox-selected-hover-icon-color]="color(user.id)"
+                        [style.--mat-checkbox-selected-pressed-icon-color]="color(user.id)"
+                        [style.--mat-checkbox-disabled-selected-icon-color]="color(user.id)"
+                        [style.--mat-checkbox-unselected-icon-color]="color(user.id)"
+                        [style.--mat-checkbox-disabled-label-color]="'var(--mat-sys-on-surface)'">
+            <span class="name" [title]="name(user)">{{ name(user) }}{{ isMe(user) ? ' (moi)' : '' }}</span>
+          </mat-checkbox>
+        } @empty {
+          <p class="empty">Aucun résultat</p>
+        }
+      </div>
+    }
   `,
   styles: `
-    .filter { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
-    .label { font: var(--mat-sys-label-large); color: var(--mat-sys-on-surface-variant); }
-    .name { display: inline-flex; align-items: center; gap: 6px; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    :host { display: flex; flex-direction: column; min-height: 0; padding: 4px 8px 8px; }
+    .head { display: flex; align-items: center; justify-content: space-between; padding: 8px; border: none; cursor: pointer;
+      background: none; color: inherit; font: var(--mat-sys-title-small); }
+    .search { display: flex; align-items: center; gap: 4px; margin: 0 8px; padding: 0 8px; border-radius: 18px;
+      background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface-variant); }
+    .search:focus-within { outline: 2px solid var(--mat-sys-primary); }
+    .search mat-icon { flex: none; width: 20px; height: 20px; font-size: 20px; }
+    .search input { flex: 1; min-width: 0; height: 36px; border: none; outline: none; background: none; color: var(--mat-sys-on-surface);
+      font: var(--mat-sys-body-medium); }
+    .all { align-self: flex-start; margin: 4px 0 0 4px; }
+    .list { display: flex; flex-direction: column; min-height: 80px; overflow-y: auto; }
+    mat-checkbox { --mat-checkbox-state-layer-size: 34px; }
+    .name { font: var(--mat-sys-body-medium); }
+    .empty { margin: 8px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
   `,
 })
 export class PeopleFilter {
-  readonly users = input.required<UserSummary[]>();
-  readonly meId = input.required<number | null>();
-  readonly selected = input.required<ReadonlySet<number>>();
-  readonly selectedChange = output<Set<number>>();
-
-  protected readonly others = computed(() => this.users().filter((u) => u.id !== this.meId()));
-  protected readonly allSelected = computed(
-    () => this.others().length > 0 && this.others().every((u) => this.selected().has(u.id)),
-  );
+  protected readonly store = inject(PeopleStore);
+  protected readonly open = signal(window.innerWidth >= SMALL_SCREEN_PX);
+  protected readonly query = signal('');
+  /** Soi d'abord (toujours affiché), puis les autres dans l'ordre alphabétique. */
+  protected readonly results = computed(() => {
+    const me = this.store.me();
+    return searchPeople(me ? [me, ...this.store.others()] : this.store.others(), this.query());
+  });
   protected readonly color = colorFor;
   protected readonly name = fullName;
 
-  protected toggleAll(): void {
-    this.emit(this.allSelected() ? new Set() : new Set(this.others().map((u) => u.id)));
-  }
-
-  protected toggle(id: number, checked: boolean): void {
-    const next = new Set(this.selected());
-    if (checked) next.add(id);
-    else next.delete(id);
-    this.emit(next);
-  }
-
-  private emit(ids: Set<number>): void {
-    saveVisible([...ids]);
-    this.selectedChange.emit(ids);
+  protected isMe(user: UserSummary): boolean {
+    return user.id === this.store.meId();
   }
 }

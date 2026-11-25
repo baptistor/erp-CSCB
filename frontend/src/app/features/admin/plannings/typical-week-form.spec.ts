@@ -1,44 +1,36 @@
-import { FormArray, FormControl, FormGroup } from '@angular/forms';
-import { dayMinutes, weekValidator } from './typical-week-form';
+import { dayError, dayMinutes, DayValue, weekOk } from './typical-week-form';
 
-describe('weekValidator (contrat hebdomadaire)', () => {
-  const week = (weekly: number, start: string, end: string) =>
-    new FormGroup({
-      weeklyHours: new FormControl(weekly),
-      days: new FormArray(
-        [1, 2, 3, 4, 5, 6, 7].map(
-          (d) =>
-            new FormGroup({
-              worked: new FormControl(d <= 5),
-              startTime: new FormControl(start),
-              endTime: new FormControl(end),
-            }),
-        ),
-      ),
-    });
+describe('semaine type (matin + après-midi)', () => {
+  const day = (start: string, end: string, worked = true): DayValue => ({
+    morning: worked,
+    morningStart: start,
+    morningEnd: '12:30',
+    afternoon: worked,
+    afternoonStart: '13:30',
+    afternoonEnd: end,
+  });
+  const week = (start: string, end: string) => [1, 2, 3, 4, 5, 6, 7].map((d) => day(start, end, d <= 5));
 
-  it('accepte la semaine par défaut : 5 × 9h–16h = 35 h pour 35 h', () => {
-    expect(weekValidator(week(35, '09:00', '16:00'))).toBeNull();
+  it('accepte la semaine par défaut : 5 × 7 h = 35 h', () => {
+    expect(weekOk(week('09:00', '17:00'), 35)).toBe(true);
   });
 
-  it('refuse une semaine sous le contrat (rouge)', () => {
-    expect(weekValidator(week(35, '09:00', '15:00'))).toEqual({ contract: 'under' });
+  it('refuse sous ou au-dessus du contrat, ou un contrat hors pas', () => {
+    expect(weekOk(week('09:00', '16:00'), 35)).toBe(false);
+    expect(weekOk(week('09:00', '18:00'), 35)).toBe(false);
+    expect(weekOk(week('09:00', '17:00'), 35.1)).toBe(false);
   });
 
-  it('refuse une semaine au-dessus du contrat (orange)', () => {
-    expect(weekValidator(week(35, '09:00', '17:00'))).toEqual({ contract: 'over' });
+  it('refuse un matin après 12:30, un après-midi avant 13:30, une fin avant le début', () => {
+    expect(dayError({ ...day('09:00', '17:00'), morningEnd: '12:45' })).toContain('pause de midi');
+    expect(dayError({ ...day('09:00', '17:00'), afternoonStart: '13:15' })).toContain('pause de midi');
+    expect(dayError(day('09:00', '13:00'))).toContain('Après-midi');
+    expect(dayError(day('09:00', '17:00'))).toBeNull();
   });
 
-  it('signale une journée dont la fin est avant le début', () => {
-    expect(weekValidator(week(35, '16:00', '09:00'))?.['days']).toBeTruthy();
-  });
-
-  it('refuse un contrat hors pas de 0,25', () => {
-    expect(weekValidator(week(35.1, '09:00', '16:00'))).toEqual({ weekly: expect.any(String) });
-  });
-
-  it('durée d’un jour (0 si non travaillé)', () => {
-    expect(dayMinutes({ worked: true, startTime: '09:00', endTime: '16:00' })).toBe(420);
-    expect(dayMinutes({ worked: false, startTime: '09:00', endTime: '16:00' })).toBe(0);
+  it('durée hors pause ; matin seul ; non travaillé', () => {
+    expect(dayMinutes(day('09:00', '17:00'))).toBe(420);
+    expect(dayMinutes({ ...day('09:00', '17:00'), afternoon: false })).toBe(210);
+    expect(dayMinutes(day('09:00', '17:00', false))).toBe(0);
   });
 });

@@ -6,6 +6,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface TypicalDayRepository extends JpaRepository<TypicalDay, Long> {
 
-	List<TypicalDay> findByUserIdOrderByDayOfWeek(Long userId);
+	List<TypicalDay> findByUserIdAndWeekTypeOrderByDayOfWeek(Long userId, WeekType weekType);
 
 }

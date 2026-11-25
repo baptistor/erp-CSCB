@@ -3,7 +3,16 @@
 
 import { TypicalDay } from '../models/typical-day';
 export interface UserSchedule {
+
+  /**
+   * Semaine classique
+   */
   days: Array<TypicalDay>;
+
+  /**
+   * Semaine de vacances scolaires ; null = à compléter (reprend la semaine classique)
+   */
+  holidayDays?: (Array<TypicalDay> | null);
 
   /**
    * Contrat hebdomadaire en heures (pas de 0,25, max 168) ; la semaine type doit le totaliser exactement

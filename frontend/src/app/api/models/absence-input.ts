@@ -6,8 +6,8 @@ import { LocalTime } from '../models/local-time';
 
 /**
  * Absence posée sur le planning (spec §3) : plage horaire d'un seul jour (startTime + endTime, au quart d'heure,
- * comprise dans la journée prévue) ou journées entières (sans heures). Le nombre d'heures est calculé par le
- * serveur (durée de la plage, ou somme des heures prévues des jours travaillés).
+ * commençant et finissant pendant les heures prévues, pause et coupures non comptées) ou journées entières (sans heures). Le nombre d'heures est calculé par le
+ * serveur (heures travaillées couvertes, ou somme des heures prévues des jours travaillés).
  */
 export interface AbsenceInput {
   comment?: (string | null);

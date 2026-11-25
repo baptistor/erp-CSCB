@@ -1,16 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, OnInit, output, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import {
-  AbstractControl,
-  FormArray,
-  FormControl,
-  FormGroup,
-  NonNullableFormBuilder,
-  ReactiveFormsModule,
-  ValidationErrors,
-  ValidatorFn,
-} from '@angular/forms';
+import { FormControl, FormGroup, NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
+import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatCheckboxModule } from '@angular/material/checkbox';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
@@ -20,10 +12,11 @@ import { MatSnackBar } from '@angular/material/snack-bar';
 import { map, startWith } from 'rxjs';
 import { Api } from '../../../api/api';
 import { getUsers, getUserSchedule, updateUserSchedule } from '../../../api/functions';
-import { UserSchedule, UserSummary } from '../../../api/models';
+import { TypicalDay, UserSchedule, UserSummary } from '../../../api/models';
 import { AuthService } from '../../../core/auth/auth.service';
 import { errorMessage } from '../../../shared/dates';
 import {
+  BREAK,
   contractStatus,
   DAY_LABELS,
   formatMinutes,
@@ -34,45 +27,66 @@ import {
 import { fullName } from '../../../shared/user-color';
 
 type DayGroup = FormGroup<{
-  worked: FormControl<boolean>;
-  startTime: FormControl<string>;
-  endTime: FormControl<string>;
+  morning: FormControl<boolean>;
+  morningStart: FormControl<string>;
+  morningEnd: FormControl<string>;
+  afternoon: FormControl<boolean>;
+  afternoonStart: FormControl<string>;
+  afternoonEnd: FormControl<string>;
 }>;
 
-/** Durée d'un jour de la semaine type, en minutes (0 si non travaillé ou plage invalide). */
-export function dayMinutes(day: { worked: boolean; startTime: string; endTime: string }): number {
-  if (!day.worked || rangeError(day.startTime, day.endTime)) return 0;
-  return toMinutes(day.endTime) - toMinutes(day.startTime);
+export interface DayValue {
+  morning: boolean;
+  morningStart: string;
+  morningEnd: string;
+  afternoon: boolean;
+  afternoonStart: string;
+  afternoonEnd: string;
+}
+
+type Week = 'classic' | 'holiday';
+
+/** Erreur d'un jour (spec §1) : fin > début, matin fini à 12:30 au plus tard, après-midi à partir de 13:30. */
+export function dayError(day: DayValue): string | null {
+  if (day.morning) {
+    const error = rangeError(day.morningStart, day.morningEnd);
+    if (error) return `Matin : ${error}`;
+    if (day.morningEnd > BREAK.start) return 'Le matin doit finir au plus tard à 12:30 (pause de midi)';
+  }
+  if (day.afternoon) {
+    const error = rangeError(day.afternoonStart, day.afternoonEnd);
+    if (error) return `Après-midi : ${error}`;
+    if (day.afternoonStart < BREAK.end) return "L'après-midi doit commencer au plus tôt à 13:30 (pause de midi)";
+  }
+  return null;
+}
+
+/** Durée d'un jour de la semaine type, en minutes, hors pause (0 si non travaillé ou invalide). */
+export function dayMinutes(day: DayValue): number {
+  if (dayError(day)) return 0;
+  return (
+    (day.morning ? toMinutes(day.morningEnd) - toMinutes(day.morningStart) : 0) +
+    (day.afternoon ? toMinutes(day.afternoonEnd) - toMinutes(day.afternoonStart) : 0)
+  );
+}
+
+/** Semaine valide : chaque jour valide, et total exactement égal au contrat. */
+export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
+  if (!isValidWeeklyHours(weeklyHours) || days.some((d) => dayError(d))) return false;
+  return contractStatus(days.reduce((sum, d) => sum + dayMinutes(d), 0), weeklyHours!).kind === 'ok';
 }
 
 /**
- * Semaine type valide (spec §1) : contrat au pas de 0,25 h, chaque jour travaillé fin > début, et total exactement
- * égal au contrat (sinon erreur `contract`, l'enregistrement n'est possible qu'au vert).
- */
-export const weekValidator: ValidatorFn = (control: AbstractControl): ValidationErrors | null => {
-  const weekly = control.get('weeklyHours')?.value as number | null;
-  if (!isValidWeeklyHours(weekly)) return { weekly: 'Contrat entre 0,25 et 168 h, par pas de 0,25 h' };
-  const days = (control.get('days') as FormArray<DayGroup>).getRawValue();
-  const errors: Record<number, string> = {};
-  days.forEach((day, i) => {
-    if (!day.worked) return;
-    const error = rangeError(day.startTime, day.endTime);
-    if (error) errors[i] = error;
-  });
-  if (Object.keys(errors).length) return { days: errors };
-  const status = contractStatus(days.reduce((sum, day) => sum + dayMinutes(day), 0), weekly!);
-  return status.kind === 'ok' ? null : { contract: status.kind };
-};
-
-/**
- * Semaine type + contrat hebdomadaire (spec §1). Admin : choix de l'employé, contrat modifiable.
- * [selfOnly] (employé) : ses propres horaires, contrat en lecture seule. Indicateur permanent vert / rouge / orange.
+ * Semaines type (classique et vacances scolaires) + contrat hebdomadaire commun (spec §1). Admin : choix de l'employé,
+ * contrat modifiable. [selfOnly] (employé) : ses propres horaires, contrat en lecture seule. Indicateur permanent
+ * vert / rouge / orange.
  */
 @Component({
   selector: 'app-typical-week-form',
   imports: [
     ReactiveFormsModule,
     MatButtonModule,
+    MatButtonToggleModule,
     MatCheckboxModule,
     MatFormFieldModule,
     MatIconModule,
@@ -102,8 +116,23 @@ export const weekValidator: ValidatorFn = (control: AbstractControl): Validation
             <mat-hint>Modifiable uniquement par un admin</mat-hint>
           }
         </mat-form-field>
-        @if (errors()?.['weekly']; as error) {
-          <p class="error">{{ error }}</p>
+        @if (!weeklyValid()) {
+          <p class="error">Contrat entre 0,25 et 168 h, par pas de 0,25 h</p>
+        }
+
+        <mat-button-toggle-group class="weeks" [value]="week()" (change)="show($event.value)" aria-label="Type de semaine">
+          <mat-button-toggle value="classic">Semaine classique</mat-button-toggle>
+          <mat-button-toggle value="holiday">
+            Vacances scolaires
+            @if (!holidayFilled()) {
+              <span class="todo">À compléter</span>
+            }
+          </mat-button-toggle>
+        </mat-button-toggle-group>
+        @if (week() === 'holiday' && !holidayFilled()) {
+          <p class="hint">
+            Semaine de vacances pas encore renseignée : elle reprend la semaine classique. Adaptez-la puis enregistrez.
+          </p>
         }
 
         @if (status(); as st) {
@@ -113,36 +142,49 @@ export const weekValidator: ValidatorFn = (control: AbstractControl): Validation
           </div>
         }
 
-        <table class="week" formArrayName="days">
+        <table class="week">
           <thead>
-            <tr><th>Jour</th><th>Travaillé</th><th>Début</th><th>Fin</th><th class="num">Durée</th><th></th></tr>
+            <tr><th>Jour</th><th>Matin (jusqu'à 12:30)</th><th>Après-midi (dès 13:30)</th><th class="num">Durée</th><th></th></tr>
           </thead>
           <tbody>
-            @for (day of form.controls.days.controls; track $index; let i = $index) {
-              <tr [formGroupName]="i">
+            @for (day of form.controls[week()].controls; track day; let i = $index) {
+              <tr [formGroup]="day">
                 <td>{{ labels[i] }}</td>
-                <td><mat-checkbox formControlName="worked" [aria-label]="labels[i] + ' travaillé'" /></td>
-                @if (day.controls.worked.value) {
-                  <td><input class="time" type="time" step="900" formControlName="startTime" [attr.aria-label]="labels[i] + ' début'" /></td>
-                  <td><input class="time" type="time" step="900" formControlName="endTime" [attr.aria-label]="labels[i] + ' fin'" /></td>
-                } @else {
-                  <td colspan="2" class="off">Non travaillé</td>
-                }
+                <td>
+                  <mat-checkbox formControlName="morning" [aria-label]="labels[i] + ' matin travaillé'" />
+                  @if (day.controls.morning.value) {
+                    <input class="time" type="time" step="900" formControlName="morningStart" [attr.aria-label]="labels[i] + ' matin début'" />
+                    –
+                    <input class="time" type="time" step="900" formControlName="morningEnd" [attr.aria-label]="labels[i] + ' matin fin'" />
+                  } @else {
+                    <span class="off">Non travaillé</span>
+                  }
+                </td>
+                <td>
+                  <mat-checkbox formControlName="afternoon" [aria-label]="labels[i] + ' après-midi travaillé'" />
+                  @if (day.controls.afternoon.value) {
+                    <input class="time" type="time" step="900" formControlName="afternoonStart" [attr.aria-label]="labels[i] + ' après-midi début'" />
+                    –
+                    <input class="time" type="time" step="900" formControlName="afternoonEnd" [attr.aria-label]="labels[i] + ' après-midi fin'" />
+                  } @else {
+                    <span class="off">Non travaillé</span>
+                  }
+                </td>
                 <td class="num">{{ durations()[i] ? duration(durations()[i]) : '—' }}</td>
-                <td class="error">{{ errors()?.['days']?.[i] }}</td>
+                <td class="error">{{ dayErrors()[i] }}</td>
               </tr>
             }
           </tbody>
           <tfoot>
-            <tr><td colspan="4" class="total-label">Total de la semaine</td>
+            <tr><td colspan="3" class="total-label">Total de la semaine (pause non comptée)</td>
               <td class="num total">{{ duration(total()) }}</td><td></td></tr>
           </tfoot>
         </table>
 
         <div class="actions">
-          <button mat-flat-button type="submit" [disabled]="form.invalid || saving()">Enregistrer</button>
-          @if (status()?.kind !== 'ok') {
-            <span class="hint">L'enregistrement n'est possible que lorsque le contrat est respecté.</span>
+          <button mat-flat-button type="submit" [disabled]="!canSave() || saving()">Enregistrer</button>
+          @if (blocked(); as reason) {
+            <span class="hint">{{ reason }}</span>
           }
         </div>
       </form>
@@ -156,6 +198,8 @@ export const weekValidator: ValidatorFn = (control: AbstractControl): Validation
     .week th { text-align: left; font: var(--mat-sys-label-medium); color: var(--mat-sys-on-surface-variant); padding: 4px 12px 4px 0; }
     .week td { padding: 4px 12px 4px 0; height: 44px; }
     .time { font: var(--mat-sys-body-large); padding: 6px 8px; border: 1px solid var(--mat-sys-outline); border-radius: 4px; background: transparent; color: inherit; }
+    .weeks { margin: 12px 0 0; }
+    .todo { margin-left: 6px; padding: 2px 8px; border-radius: 10px; font: var(--mat-sys-label-small); color: #7a4100; background: #fef3e0; }
     .off { color: var(--mat-sys-on-surface-variant); font-style: italic; }
     .actions { display: flex; align-items: center; gap: 12px; }
     .hint { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
@@ -179,7 +223,7 @@ export class TypicalWeekForm implements OnInit {
 
   /** Mode employé : ses propres horaires uniquement. */
   readonly selfOnly = input(false);
-  /** Employé choisi (mode admin), pour afficher ses horaires modifiés à venir à côté. */
+  /** Employé choisi (mode admin), pour afficher ses heures ajoutées à venir à côté. */
   readonly userChange = output<number>();
 
   protected readonly users = signal<UserSummary[]>([]);
@@ -189,17 +233,14 @@ export class TypicalWeekForm implements OnInit {
   protected readonly labels = DAY_LABELS;
   protected readonly name = fullName;
 
-  protected readonly form = this.fb.group(
-    {
-      weeklyHours: this.fb.control<number | null>(35),
-      days: this.fb.array(DAY_LABELS.map(() => this.dayGroup())),
-    },
-    { validators: weekValidator },
-  );
+  protected readonly week = signal<Week>('classic');
+  /** La semaine de vacances a déjà été enregistrée (sinon elle reprend la classique). */
+  protected readonly holidayFilled = signal(false);
 
-  /** Erreurs du formulaire, recalculées à chaque changement (ex. { min: '…' } ou { days: { 0: '…' } }). */
-  protected readonly errors = toSignal(this.form.statusChanges.pipe(map(() => this.form.errors)), {
-    initialValue: null as ValidationErrors | null,
+  protected readonly form = this.fb.group({
+    weeklyHours: this.fb.control<number | null>(35),
+    classic: this.fb.array(DAY_LABELS.map(() => this.dayGroup())),
+    holiday: this.fb.array(DAY_LABELS.map(() => this.dayGroup())),
   });
 
   /** Valeurs du formulaire en continu (pour l'indicateur et les durées, recalculés à chaque frappe). */
@@ -211,12 +252,31 @@ export class TypicalWeekForm implements OnInit {
     { initialValue: this.form.getRawValue() },
   );
 
-  protected readonly durations = computed(() => this.value().days.map((day) => dayMinutes(day)));
+  protected readonly weeklyValid = computed(() => isValidWeeklyHours(this.value().weeklyHours));
+  private readonly shownDays = computed(() => this.value()[this.week()]);
+  protected readonly durations = computed(() => this.shownDays().map((day) => dayMinutes(day)));
+  protected readonly dayErrors = computed(() => this.shownDays().map((day) => dayError(day)));
   protected readonly total = computed(() => this.durations().reduce((sum, m) => sum + m, 0));
-  protected readonly status = computed(() => {
-    const weekly = this.value().weeklyHours;
-    return isValidWeeklyHours(weekly) ? contractStatus(this.total(), weekly!) : null;
+  protected readonly status = computed(() =>
+    this.weeklyValid() ? contractStatus(this.total(), this.value().weeklyHours!) : null,
+  );
+
+  /** La semaine de vacances est envoyée si elle existe déjà, ou si l'on est en train de la remplir. */
+  private readonly sendHoliday = computed(() => {
+    this.value();
+    return this.holidayFilled() || this.week() === 'holiday' || this.form.controls.holiday.dirty;
   });
+
+  /** Raison qui empêche l'enregistrement (les deux semaines partagent le contrat), ou null. */
+  protected readonly blocked = computed(() => {
+    const { weeklyHours, classic, holiday } = this.value();
+    if (!weekOk(classic, weeklyHours)) return 'La semaine classique doit respecter le contrat pour enregistrer.';
+    if (this.sendHoliday() && !weekOk(holiday, weeklyHours)) {
+      return 'La semaine de vacances doit respecter le contrat pour enregistrer.';
+    }
+    return null;
+  });
+  protected readonly canSave = computed(() => this.blocked() === null);
   protected readonly duration = formatMinutes;
 
   ngOnInit(): void {
@@ -236,6 +296,7 @@ export class TypicalWeekForm implements OnInit {
     this.userId.set(userId);
     this.userChange.emit(userId);
     this.loaded.set(false);
+    this.week.set('classic');
     try {
       this.fill(await this.api.invoke(getUserSchedule, { userId }));
       this.loaded.set(true);
@@ -244,9 +305,17 @@ export class TypicalWeekForm implements OnInit {
     }
   }
 
+  /** Semaine de vacances jamais remplie : on part de la semaine classique. */
+  protected show(week: Week): void {
+    if (week === 'holiday' && !this.holidayFilled() && !this.form.controls.holiday.dirty) {
+      this.form.controls.holiday.setValue(this.form.controls.classic.getRawValue());
+    }
+    this.week.set(week);
+  }
+
   protected async save(): Promise<void> {
     const userId = this.userId();
-    if (userId == null || this.form.invalid) return;
+    if (userId == null || !this.canSave()) return;
     const value = this.form.getRawValue();
     this.saving.set(true);
     try {
@@ -254,11 +323,8 @@ export class TypicalWeekForm implements OnInit {
         userId,
         body: {
           weeklyHours: value.weeklyHours!,
-          days: value.days.map((day, i) => ({
-            dayOfWeek: i + 1,
-            startTime: day.worked ? day.startTime : null,
-            endTime: day.worked ? day.endTime : null,
-          })),
+          days: this.toDays(value.classic),
+          holidayDays: this.sendHoliday() ? this.toDays(value.holiday) : null,
         },
       });
       this.fill(saved);
@@ -270,19 +336,45 @@ export class TypicalWeekForm implements OnInit {
     }
   }
 
+  private toDays(days: DayValue[]): TypicalDay[] {
+    return days.map((day, i) => ({
+      dayOfWeek: i + 1,
+      morningStart: day.morning ? day.morningStart : null,
+      morningEnd: day.morning ? day.morningEnd : null,
+      afternoonStart: day.afternoon ? day.afternoonStart : null,
+      afternoonEnd: day.afternoon ? day.afternoonEnd : null,
+    }));
+  }
+
   private fill(schedule: UserSchedule): void {
+    this.form.markAsPristine();
     this.form.controls.weeklyHours.setValue(schedule.weeklyHours);
-    schedule.days.forEach((day) => {
-      this.form.controls.days.at(day.dayOfWeek - 1).setValue({
-        worked: day.startTime != null,
-        startTime: day.startTime ?? '09:00',
-        endTime: day.endTime ?? '16:00',
+    this.fillWeek('classic', schedule.days);
+    this.fillWeek('holiday', schedule.holidayDays ?? schedule.days);
+    this.holidayFilled.set(schedule.holidayDays != null);
+  }
+
+  private fillWeek(week: Week, days: TypicalDay[]): void {
+    days.forEach((day) => {
+      this.form.controls[week].at(day.dayOfWeek - 1).setValue({
+        morning: day.morningStart != null,
+        morningStart: day.morningStart ?? '09:00',
+        morningEnd: day.morningEnd ?? '12:30',
+        afternoon: day.afternoonStart != null,
+        afternoonStart: day.afternoonStart ?? '13:30',
+        afternoonEnd: day.afternoonEnd ?? '17:00',
       });
     });
-    this.form.markAsPristine();
   }
 
   private dayGroup(): DayGroup {
-    return this.fb.group({ worked: [false], startTime: ['09:00'], endTime: ['16:00'] });
+    return this.fb.group({
+      morning: [false],
+      morningStart: ['09:00'],
+      morningEnd: ['12:30'],
+      afternoon: [false],
+      afternoonStart: ['13:30'],
+      afternoonEnd: ['17:00'],
+    });
   }
 }

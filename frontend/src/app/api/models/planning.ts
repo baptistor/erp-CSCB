@@ -6,4 +6,9 @@ import { PlanningDay } from '../models/planning-day';
 export interface Planning {
   absences: Array<PlanningAbsence>;
   days: Array<PlanningDay>;
+
+  /**
+   * Lundis des semaines de vacances scolaires touchant la période
+   */
+  holidayWeeks: Array<string>;
 }

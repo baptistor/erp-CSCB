@@ -4,16 +4,17 @@ import { Api } from '../../../api/api';
 import { getUsers } from '../../../api/functions';
 import { UserSummary } from '../../../api/models';
 import { BalancesAdmin } from './balances-admin';
+import { SchoolHolidaysAdmin } from './school-holidays-admin';
 import { SpecialDaysAdmin } from './special-days-admin';
 import { TypicalWeekForm } from './typical-week-form';
 
 /**
- * /admin/plannings : semaine type, contrat et horaires modifiés à venir de chaque employé, soldes (spec).
+ * /admin/plannings : semaines type, contrat, vacances scolaires et heures ajoutées à venir de chaque employé, soldes (spec).
  * Pas de calendrier éditable ici : depuis le planning, chacun n'agit que sur son propre emploi du temps.
  */
 @Component({
   selector: 'app-plannings-page',
-  imports: [MatTabsModule, TypicalWeekForm, SpecialDaysAdmin, BalancesAdmin],
+  imports: [MatTabsModule, TypicalWeekForm, SpecialDaysAdmin, SchoolHolidaysAdmin, BalancesAdmin],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <h1>Édition des plannings</h1>
@@ -23,6 +24,9 @@ import { TypicalWeekForm } from './typical-week-form';
         @if (selectedUser(); as user) {
           <app-special-days-admin [user]="user" />
         }
+      </mat-tab>
+      <mat-tab label="Vacances scolaires">
+        <app-school-holidays-admin />
       </mat-tab>
       <mat-tab label="Soldes">
         <app-balances-admin />

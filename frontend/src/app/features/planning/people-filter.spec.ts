@@ -1,4 +1,5 @@
-import { loadVisible, saveVisible, visiblePeople } from './people-filter';
+import { searchPeople } from './people-filter';
+import { loadVisible, saveVisible, visiblePeople } from './people-store';
 
 describe('people-filter', () => {
   const users = [
@@ -13,6 +14,13 @@ describe('people-filter', () => {
 
   it('moi en premier, puis les cochés dans l’ordre de la liste', () => {
     expect(visiblePeople(users, 2, new Set([3, 4])).map((u) => u.id)).toEqual([2, 4, 3]);
+  });
+
+  it('recherche par nom ou prénom, sans accents ni majuscules', () => {
+    expect(searchPeople(users, 'CHLOE').map((u) => u.id)).toEqual([4]);
+    expect(searchPeople(users, 'martin ali').map((u) => u.id)).toEqual([2]);
+    expect(searchPeople(users, ' ').length).toBe(3);
+    expect(searchPeople(users, 'zz')).toEqual([]);
   });
 
   it('mémorise le choix sur le navigateur', () => {

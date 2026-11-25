@@ -3,7 +3,6 @@ package com.erp.leave;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Clock;
-import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
@@ -12,6 +11,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
@@ -106,7 +106,7 @@ public class AbsenceService {
 			}
 			minutes = 0;
 			for (LocalDate day = start; !day.isAfter(end); day = day.plusDays(1)) {
-				minutes += schedules.plannedDay(userId, day).minutes();
+				minutes += schedules.plannedRanges(userId, day).stream().mapToLong(TimeRange::minutes).sum();
 				wanted.put(day, new Interval(0, WHOLE_DAY_END));
 			}
 			if (minutes == 0) {
@@ -144,7 +144,10 @@ public class AbsenceService {
 		return AbsenceRequestDto.of(request);
 	}
 
-	/** Plage d'un seul jour, au quart d'heure, comprise dans la journée prévue ; renvoie sa durée en minutes. */
+	/**
+	 * Plage d'un seul jour, au quart d'heure, qui commence et finit pendant les heures prévues ; renvoie les minutes
+	 * travaillées qu'elle couvre (pause de midi et coupures non comptées).
+	 */
 	private long timedRange(Long userId, LocalDate start, LocalDate end, LocalTime from, LocalTime to) {
 		if (!end.equals(start)) {
 			throw badRequest("Une absence avec horaires porte sur un seul jour");
@@ -155,15 +158,15 @@ public class AbsenceService {
 		if (!onQuarter(from) || !onQuarter(to)) {
 			throw badRequest("Les horaires d'absence se posent au quart d'heure (ex. 14:00, 14:15…)");
 		}
-		TimeRange planned = schedules.plannedDay(userId, start);
-		if (!planned.worked()) {
+		List<TimeRange> planned = schedules.plannedRanges(userId, start);
+		if (planned.isEmpty()) {
 			throw badRequest("Le " + start.format(DATE_FR) + " n'est pas un jour travaillé");
 		}
-		if (from.isBefore(planned.start()) || to.isAfter(planned.end())) {
-			throw badRequest("L'absence doit être comprise dans vos horaires du " + start.format(DATE_FR) + " ("
-					+ planned.start() + "–" + planned.end() + ")");
+		if (planned.stream().noneMatch(r -> r.canStartAt(from)) || planned.stream().noneMatch(r -> r.canEndAt(to))) {
+			throw badRequest("L'absence doit commencer et finir pendant vos horaires du " + start.format(DATE_FR) + " ("
+					+ planned.stream().map(r -> r.start() + "–" + r.end()).collect(Collectors.joining(", ")) + ")");
 		}
-		return Duration.between(from, to).toMinutes();
+		return planned.stream().mapToLong(r -> r.minutesWithin(from, to)).sum();
 	}
 
 	private static boolean onQuarter(LocalTime time) {

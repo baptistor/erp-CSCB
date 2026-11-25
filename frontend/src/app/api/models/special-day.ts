@@ -4,8 +4,8 @@
 import { LocalTime } from '../models/local-time';
 export interface SpecialDay {
   date: string;
-  endTime?: (LocalTime | null);
+  endTime: LocalTime;
   id: number;
-  startTime?: (LocalTime | null);
+  startTime: LocalTime;
   userId: number;
 }

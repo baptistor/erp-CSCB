@@ -2,9 +2,14 @@ import {
   absenceSelectionAllowed,
   canEditDay,
   contractStatus,
+  defaultExtra,
+  extraError,
   formatMinutes,
   isValidWeeklyHours,
+  mergeRanges,
+  outsideTypical,
   rangeError,
+  workedMinutes,
 } from './schedule-rules';
 
 describe('schedule-rules', () => {
@@ -94,5 +99,57 @@ describe('absenceSelectionAllowed', () => {
   it('journées entières : au moins un jour travaillé', () => {
     expect(absenceSelectionAllowed(myDays, { allDay: true, startDate: '2026-11-20', endDateExclusive: '2026-11-23' }, today)).toBe(true);
     expect(absenceSelectionAllowed(myDays, { allDay: true, startDate: '2026-11-21', endDateExclusive: '2026-11-23' }, today)).toBe(false);
+  });
+});
+
+describe('heures ajoutées et pause de midi', () => {
+  const typical = [
+    { start: '09:00', end: '12:30' },
+    { start: '13:30', end: '16:00' },
+  ];
+
+  it('accepte avant, après, avec coupure, et un jour non travaillé', () => {
+    for (const [start, end] of [['07:00', '09:00'], ['16:00', '18:00'], ['18:00', '20:00']]) {
+      expect(extraError({ start, end }, typical, [])).toBeNull();
+    }
+    expect(extraError({ start: '09:00', end: '12:30' }, [], [])).toBeNull();
+  });
+
+  it('refuse ce qui empiète sur la journée type ou sur d’autres heures ajoutées', () => {
+    for (const [start, end] of [['15:00', '18:00'], ['08:00', '10:00'], ['10:00', '12:00']]) {
+      expect(extraError({ start, end }, typical, [])).toContain('journée type');
+    }
+    expect(extraError({ start: '19:00', end: '21:00' }, typical, [{ start: '18:00', end: '20:00' }])).toContain('chevauchent');
+  });
+
+  it('refuse la pause de midi, même un jour non travaillé', () => {
+    for (const [start, end] of [['12:30', '13:30'], ['12:00', '12:45'], ['13:00', '14:00'], ['10:00', '16:00']]) {
+      expect(extraError({ start, end }, [], [])).toContain('pause de midi');
+    }
+  });
+
+  it('garde la plus longue partie hors journée type et hors pause', () => {
+    expect(outsideTypical({ start: '15:00', end: '18:00' }, typical)).toEqual({ start: '16:00', end: '18:00' });
+    expect(outsideTypical({ start: '10:00', end: '15:00' }, typical)).toBeNull();
+    expect(outsideTypical({ start: '12:00', end: '15:00' }, [])).toEqual({ start: '13:30', end: '15:00' });
+    expect(outsideTypical({ start: '12:30', end: '13:30' }, [])).toBeNull();
+  });
+
+  it('propose une heure après la journée, hors pause', () => {
+    expect(defaultExtra(typical)).toEqual({ start: '16:00', end: '17:00' });
+    expect(defaultExtra([typical[0]])).toEqual({ start: '13:30', end: '14:30' });
+    expect(defaultExtra([])).toEqual({ start: '09:00', end: '10:00' });
+  });
+
+  it('compte les heures travaillées hors pause', () => {
+    expect(workedMinutes(typical, '11:00', '15:00')).toBe(180);
+  });
+
+  it('fusionne les plages collées, pas les coupures', () => {
+    expect(mergeRanges([{ start: '18:00', end: '20:00' }, ...typical, { start: '16:00', end: '17:00' }])).toEqual([
+      { start: '09:00', end: '12:30' },
+      { start: '13:30', end: '17:00' },
+      { start: '18:00', end: '20:00' },
+    ]);
   });
 });

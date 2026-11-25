@@ -1,10 +1,13 @@
-import { colorFor, fullName, tint, USER_PALETTE } from './user-color';
+import { colorFor, fullName, setUserColors, tint, USER_PALETTE } from './user-color';
 
 describe('user-color', () => {
-  it('donne une couleur stable par id', () => {
-    expect(colorFor(3)).toBe(colorFor(3));
-    expect(colorFor(1)).not.toBe(colorFor(2));
-    expect(colorFor(USER_PALETTE.length)).toBe(USER_PALETTE[0]);
+  it('12 employés = 12 couleurs, même avec des id espacés de 12 ; un nouvel arrivant ne change rien', () => {
+    const ids = [13, 1, 2, 25, 14, 3, 4, 15, 16, 5, 6, 7];
+    setUserColors(ids);
+    expect(new Set(ids.map(colorFor)).size).toBe(USER_PALETTE.length);
+    const before = ids.map(colorFor);
+    setUserColors([...ids, 99]);
+    expect(ids.map(colorFor)).toEqual(before);
   });
 
   it('éclaircit une couleur', () => {

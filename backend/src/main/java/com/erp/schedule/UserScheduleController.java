@@ -14,7 +14,7 @@ import com.erp.schedule.ScheduleDtos.UserScheduleDto;
 
 import jakarta.validation.Valid;
 
-/** Semaine type + minimum d'heures d'un employé. Lecture : tous ; écriture : ADMIN, ou l'employé lui-même. */
+/** Semaines type + contrat d'un employé. Lecture : tous ; écriture : ADMIN, ou l'employé lui-même. */
 @RestController
 @RequestMapping("/api/users/{userId}/schedule")
 public class UserScheduleController {
@@ -31,7 +31,7 @@ public class UserScheduleController {
 		return service.getSchedule(userId);
 	}
 
-	/** ADMIN : tout employé ; EMPLOYEE : sa propre semaine, sans changer son minimum (contrôlé dans le service). */
+	/** ADMIN : tout employé ; EMPLOYEE : ses propres semaines, sans changer son contrat (contrôlé dans le service). */
 	@PutMapping
 	@PreAuthorize("isAuthenticated()")
 	public UserScheduleDto update(@AuthenticationPrincipal AuthenticatedUser actor, @PathVariable Long userId,

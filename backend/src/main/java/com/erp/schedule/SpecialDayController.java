@@ -19,8 +19,8 @@ import com.erp.schedule.ScheduleDtos.SpecialDayInput;
 import jakarta.validation.Valid;
 
 /**
- * Horaires modifiés d'un jour (ressource technique « special-days »). Droits contrôlés dans le service : ADMIN pour tous ; EMPLOYEE pour ses propres
- * journées, à partir d'aujourd'hui.
+ * Heures ajoutées à un jour (ressource technique « special-days »). Droits contrôlés dans le service : ADMIN pour
+ * tous ; EMPLOYEE pour ses propres journées, à partir d'aujourd'hui.
  */
 @RestController
 @RequestMapping("/api/special-days")

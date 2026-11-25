@@ -61,6 +61,12 @@ export class DevLogin {
     'alice.martin@exemple.fr',
     'bruno.durand@exemple.fr',
     'chloe.bernard@exemple.fr',
+    'david.petit@exemple.fr',
+    'emma.robert@exemple.fr',
+    'farid.benali@exemple.fr',
+    'gaelle.moreau@exemple.fr',
+    'hugo.lefevre@exemple.fr',
+    'ines.garcia@exemple.fr',
   ];
 
   protected async login(email: string): Promise<void> {

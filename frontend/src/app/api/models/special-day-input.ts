@@ -4,11 +4,11 @@
 import { LocalTime } from '../models/local-time';
 
 /**
- * startTime et endTime null = non travaillé ce jour-là.
+ * Plage d'heures ajoutée à un jour, en dehors de la journée type.
  */
 export interface SpecialDayInput {
   date: string;
-  endTime?: (LocalTime | null);
-  startTime?: (LocalTime | null);
+  endTime: LocalTime;
+  startTime: LocalTime;
   userId: number;
 }

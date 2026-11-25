@@ -9,11 +9,6 @@ public interface SpecialDayRepository extends JpaRepository<SpecialDay, Long> {
 
 	List<SpecialDay> findByDayDateGreaterThanEqualAndDayDateLessThan(LocalDate from, LocalDate to);
 
-
-	boolean existsByUserIdAndDayDate(Long userId, LocalDate dayDate);
-
-	java.util.Optional<SpecialDay> findByUserIdAndDayDate(Long userId, LocalDate dayDate);
-
-	boolean existsByUserIdAndDayDateAndIdNot(Long userId, LocalDate dayDate, Long id);
+	List<SpecialDay> findByUserIdAndDayDate(Long userId, LocalDate dayDate);
 
 }

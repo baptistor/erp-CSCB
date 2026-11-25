@@ -81,9 +81,15 @@ body {
   filter: brightness(1.15);
 }
 
-// Onglets contenant la semaine type : pas de défilement interne à l'onglet (Material met overflow: auto sur le
-// contenu des onglets), c'est la page qui défile — évite une seconde barre de défilement autour du formulaire.
-.mat-mdc-tab-body:has(app-typical-week-form),
-.mat-mdc-tab-body-content:has(app-typical-week-form) {
+// Onglets : pas de défilement interne (Material met overflow: auto sur leur contenu), c'est la page qui défile —
+// évite une seconde barre de défilement.
+.mat-mdc-tab-body-active,
+.mat-mdc-tab-body-active .mat-mdc-tab-body-content {
   overflow: visible !important;
+  min-width: 0; // sans quoi un contenu large (grille du planning) élargit la page au lieu de défiler
+}
+
+// Mode Édition : la vue Mois prend aussi le fond du planning
+app-planning-calendar.editing full-calendar {
+  --fc-monarch-background: var(--planning-bg);
 }

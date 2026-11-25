@@ -15,11 +15,7 @@ import jakarta.persistence.LockModeType;
 
 public interface AbsenceRequestRepository extends JpaRepository<AbsenceRequest, Long> {
 
-	/** Absences APPROVED chevauchant [from, to[ (endDate inclus). */
-	default List<AbsenceRequest> findApprovedOverlapping(LocalDate from, LocalDate to) {
-		return findByStatusOverlapping(RequestStatus.APPROVED, from, to);
-	}
-
+	/** Absences d'un statut chevauchant [from, to[ (endDate inclus). */
 	@Query("""
 			select a from AbsenceRequest a
 			where a.status = :status and a.startDate < :to and a.endDate >= :from

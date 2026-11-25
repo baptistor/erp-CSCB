@@ -11,6 +11,12 @@ export type { GetUserSchedule$Params as GetUserSchedule$Params } from './fn/sche
 export { getUserSchedule as getUserSchedule } from './fn/schedule/get-user-schedule';
 export type { UpdateUserSchedule$Params as UpdateUserSchedule$Params } from './fn/schedule/update-user-schedule';
 export { updateUserSchedule as updateUserSchedule } from './fn/schedule/update-user-schedule';
+export type { GetSchoolHolidayWeeks$Params as GetSchoolHolidayWeeks$Params } from './fn/schedule/get-school-holiday-weeks';
+export { getSchoolHolidayWeeks as getSchoolHolidayWeeks } from './fn/schedule/get-school-holiday-weeks';
+export type { MarkSchoolHolidayWeek$Params as MarkSchoolHolidayWeek$Params } from './fn/schedule/mark-school-holiday-week';
+export { markSchoolHolidayWeek as markSchoolHolidayWeek } from './fn/schedule/mark-school-holiday-week';
+export type { UnmarkSchoolHolidayWeek$Params as UnmarkSchoolHolidayWeek$Params } from './fn/schedule/unmark-school-holiday-week';
+export { unmarkSchoolHolidayWeek as unmarkSchoolHolidayWeek } from './fn/schedule/unmark-school-holiday-week';
 export type { CreateSpecialDay$Params as CreateSpecialDay$Params } from './fn/schedule/create-special-day';
 export { createSpecialDay as createSpecialDay } from './fn/schedule/create-special-day';
 export type { UpdateSpecialDay$Params as UpdateSpecialDay$Params } from './fn/schedule/update-special-day';
