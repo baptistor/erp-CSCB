@@ -1,111 +1,130 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
-import { MatSnackBar } from '@angular/material/snack-bar';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideSlidersHorizontal } from '@ng-icons/lucide';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardCardImports } from '@/shared/components/card';
+import { ZardDialogService } from '@/shared/components/dialog';
+import { ZardItemImports } from '@/shared/components/item';
+import { ZardSkeletonComponent } from '@/shared/components/skeleton';
+import { ZardSonnerService } from '@/shared/components/sonner';
 import { Api } from '../../../api/api';
 import { adjustBalance, getUserBalance, getUsers } from '../../../api/functions';
-import { Balance, UserSummary } from '../../../api/models';
-import { BalanceView } from '../../../shared/balance-view';
+import { AdjustmentInput, Balance, UserSummary } from '../../../api/models';
+import { BalanceFigures, BalanceHistory } from '../../../shared/balance-view';
 import { errorMessage } from '../../../shared/dates';
-import { quarterHoursValidator } from '../../../shared/requests';
-import { fullName } from '../../../shared/user-color';
+import { openDialog } from '../../../shared/dialogs';
+import { fullName, setUserColors } from '../../../shared/user-color';
+import { UserAvatar } from '../../../shared/user-avatar';
+import { AdjustBalanceDialog, AdjustBalanceDialogData } from './adjust-balance-dialog';
 
-/** Onglet « Soldes » : solde d'un employé + ajustement (+/− heures, motif). */
+/** Onglet « Soldes » : liste des employés à gauche, solde + historique + ajustement à droite. */
 @Component({
   selector: 'app-balances-admin',
-  imports: [ReactiveFormsModule, MatButtonModule, MatFormFieldModule, MatInputModule, MatSelectModule, BalanceView],
+  imports: [
+    BalanceFigures,
+    BalanceHistory,
+    NgIcon,
+    UserAvatar,
+    ZardButtonComponent,
+    ZardCardImports,
+    ZardItemImports,
+    ZardSkeletonComponent,
+  ],
+  viewProviders: [provideIcons({ lucideSlidersHorizontal })],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'grid items-start gap-6 lg:grid-cols-[260px_1fr]' },
   template: `
-    <mat-form-field appearance="outline" class="user">
-      <mat-label>Employé</mat-label>
-      <mat-select [value]="userId()" (valueChange)="select($event)">
+    <z-card zSize="sm" class="lg:sticky lg:top-0">
+      <z-card-content class="flex max-h-72 flex-col gap-0.5 overflow-y-auto lg:max-h-[70vh]" role="listbox"
+                      aria-label="Employés">
         @for (user of users(); track user.id) {
-          <mat-option [value]="user.id">{{ name(user) }}</mat-option>
+          <button z-item zSize="xs" type="button" role="option" class="text-left hover:bg-muted"
+                  [class.bg-muted]="user.id === userId()" [attr.aria-selected]="user.id === userId()"
+                  (click)="select(user.id)">
+            <div z-item-media><app-user-avatar [user]="user" size="sm" /></div>
+            <div z-item-content><div z-item-title>{{ name(user) }}</div></div>
+          </button>
         }
-      </mat-select>
-    </mat-form-field>
+      </z-card-content>
+    </z-card>
 
-    @if (balance(); as b) {
-      <form class="adjust" [formGroup]="form" (ngSubmit)="adjust()">
-        <h3>Ajuster le solde</h3>
-        <div class="row">
-          <mat-form-field appearance="outline" class="hours">
-            <mat-label>Heures (+ ou −)</mat-label>
-            <input matInput type="number" step="0.25" formControlName="hours" />
-            <span matTextSuffix>h</span>
-            @if (form.controls.hours.hasError('quarterHours')) {
-              <mat-error>Non nul, par pas de 0,25 h</mat-error>
-            }
-          </mat-form-field>
-          <mat-form-field appearance="outline" class="reason">
-            <mat-label>Motif</mat-label>
-            <input matInput formControlName="reason" placeholder="ex. reprise du solde existant" />
-          </mat-form-field>
-          <button mat-flat-button type="submit" [disabled]="form.invalid || saving()">Enregistrer</button>
+    <div class="flex min-w-0 flex-col gap-6">
+      @if (selected(); as user) {
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <app-user-avatar [user]="user" size="lg" />
+            <div>
+              <p class="text-base font-semibold">{{ name(user) }}</p>
+              <p class="text-sm text-muted-foreground">{{ user.email }}</p>
+            </div>
+          </div>
+          <button z-button zType="outline" type="button" [disabled]="!balance()" (click)="adjust(user)">
+            <ng-icon name="lucideSlidersHorizontal" /> Ajuster le solde
+          </button>
         </div>
-      </form>
-      <app-balance-view [balance]="b" />
-    }
-  `,
-  styles: `
-    :host { display: block; padding-top: 16px; }
-    .user { width: 320px; max-width: 100%; }
-    .adjust { margin-bottom: 16px; }
-    h3 { font: var(--mat-sys-title-medium); margin: 0 0 8px; }
-    .row { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
-    .hours { width: 160px; }
-    .reason { flex: 1; min-width: 240px; max-width: 420px; }
+      }
+
+      @if (balance(); as b) {
+        <app-balance-figures [balance]="b" class="sm:grid-cols-2!" />
+        <z-card>
+          <z-card-header>
+            <z-card-title>Historique</z-card-title>
+            <z-card-description>Heures sup validées, récupérations et ajustements.</z-card-description>
+          </z-card-header>
+          <z-card-content><app-balance-history [balance]="b" /></z-card-content>
+        </z-card>
+      } @else {
+        <div class="grid gap-4 sm:grid-cols-2">
+          <z-skeleton class="h-[104px] rounded-xl" /><z-skeleton class="h-[104px] rounded-xl" />
+        </div>
+        <z-skeleton class="h-48 rounded-xl" />
+      }
+    </div>
   `,
 })
 export class BalancesAdmin {
   private readonly api = inject(Api);
-  private readonly fb = inject(NonNullableFormBuilder);
-  private readonly snack = inject(MatSnackBar);
+  private readonly dialogs = inject(ZardDialogService);
+  private readonly toast = inject(ZardSonnerService);
 
   protected readonly users = signal<UserSummary[]>([]);
   protected readonly userId = signal<number | null>(null);
+  protected readonly selected = computed(() => this.users().find((u) => u.id === this.userId()) ?? null);
   protected readonly balance = signal<Balance | null>(null);
-  protected readonly saving = signal(false);
   protected readonly name = fullName;
-
-  protected readonly form = this.fb.group({
-    hours: this.fb.control<number | null>(null, [Validators.required, quarterHoursValidator(999, true)]),
-    reason: ['', [Validators.required, Validators.pattern(/\S/)]],
-  });
 
   constructor() {
     void this.api.invoke(getUsers).then((users) => {
+      setUserColors(users.map((u) => u.id));
       this.users.set(users);
       if (users.length) void this.select(users[0].id);
     });
   }
 
   protected async select(userId: number): Promise<void> {
+    if (userId === this.userId()) return;
     this.userId.set(userId);
     this.balance.set(null);
     try {
-      this.balance.set(await this.api.invoke(getUserBalance, { userId }));
+      const balance = await this.api.invoke(getUserBalance, { userId });
+      if (this.userId() === userId) this.balance.set(balance);
     } catch (error) {
-      this.snack.open(errorMessage(error, 'Impossible de charger le solde'), 'OK', { duration: 5000 });
+      this.toast.error(errorMessage(error, 'Impossible de charger le solde'), { duration: 5000 });
     }
   }
 
-  protected async adjust(): Promise<void> {
-    const userId = this.userId();
-    if (userId == null || this.form.invalid) return;
-    const { hours, reason } = this.form.getRawValue();
-    this.saving.set(true);
+  protected async adjust(user: UserSummary): Promise<void> {
+    const body = await openDialog<AdjustBalanceDialog, AdjustBalanceDialogData, AdjustmentInput>(
+      this.dialogs,
+      AdjustBalanceDialog,
+      { name: fullName(user) },
+    );
+    if (!body) return;
     try {
-      this.balance.set(await this.api.invoke(adjustBalance, { userId, body: { hours: hours!, reason: reason.trim() } }));
-      this.form.reset();
-      this.snack.open('Solde ajusté', 'OK', { duration: 3000 });
+      this.balance.set(await this.api.invoke(adjustBalance, { userId: user.id, body }));
+      this.toast.success('Solde ajusté', { duration: 3000 });
     } catch (error) {
-      this.snack.open(errorMessage(error), 'OK', { duration: 8000 });
-    } finally {
-      this.saving.set(false);
+      this.toast.error(errorMessage(error), { duration: 8000 });
     }
   }
 }

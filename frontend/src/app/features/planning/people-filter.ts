@@ -1,7 +1,9 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
-import { MatButtonModule } from '@angular/material/button';
-import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MatIconModule } from '@angular/material/icon';
+import { FormsModule } from '@angular/forms';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideChevronDown, lucideChevronUp, lucideSearch } from '@ng-icons/lucide';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardCheckboxComponent } from '@/shared/components/checkbox';
 import { UserSummary } from '../../api/models';
 import { colorFor, fullName } from '../../shared/user-color';
 import { PeopleStore } from './people-store';
@@ -24,56 +26,42 @@ export function searchPeople(users: UserSummary[], query: string): UserSummary[]
 /** Menu de gauche : recherche + liste à cocher des emplois du temps affichés, comme Google Agenda (spec §1). */
 @Component({
   selector: 'app-people-filter',
-  imports: [MatButtonModule, MatCheckboxModule, MatIconModule],
+  imports: [FormsModule, NgIcon, ZardButtonComponent, ZardCheckboxComponent],
+  viewProviders: [provideIcons({ lucideChevronDown, lucideChevronUp, lucideSearch })],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <button class="head" type="button" [attr.aria-expanded]="open()" (click)="open.set(!open())">
+    <button class="flex items-center justify-between rounded-md p-2 text-sm font-medium hover:bg-sidebar-accent"
+            type="button" [attr.aria-expanded]="open()" (click)="open.set(!open())">
       <span>Emplois du temps</span>
-      <mat-icon>{{ open() ? 'expand_less' : 'expand_more' }}</mat-icon>
+      <ng-icon [name]="open() ? 'lucideChevronUp' : 'lucideChevronDown'" />
     </button>
     @if (open()) {
-      <label class="search">
-        <mat-icon>search</mat-icon>
+      <label class="mx-2 flex items-center gap-2 rounded-md border bg-background px-2 text-muted-foreground
+                    focus-within:ring-2 focus-within:ring-ring/50">
+        <ng-icon name="lucideSearch" class="shrink-0" />
         <input type="search" placeholder="Rechercher" aria-label="Rechercher un collaborateur"
+               class="h-8 min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none"
                [value]="query()" (input)="query.set($any($event.target).value)" />
       </label>
-      <button mat-button type="button" class="all" (click)="store.toggleAll()">
+      <button z-button zType="ghost" zSize="sm" type="button" class="mt-1 ml-1 self-start" (click)="store.toggleAll()">
         {{ store.allSelected() ? 'Seulement moi' : 'Tout le monde' }}
       </button>
-      <div class="list" role="group" aria-label="Emplois du temps affichés">
+      <div class="flex min-h-20 flex-col gap-2 overflow-y-auto px-2 py-1" role="group" aria-label="Emplois du temps affichés">
         @for (user of results(); track user.id) {
-          <mat-checkbox [checked]="isMe(user) || store.selected().has(user.id)" [disabled]="isMe(user)"
-                        (change)="store.toggle(user.id, $event.checked)"
-                        [style.--mat-checkbox-selected-icon-color]="color(user.id)"
-                        [style.--mat-checkbox-selected-focus-icon-color]="color(user.id)"
-                        [style.--mat-checkbox-selected-hover-icon-color]="color(user.id)"
-                        [style.--mat-checkbox-selected-pressed-icon-color]="color(user.id)"
-                        [style.--mat-checkbox-disabled-selected-icon-color]="color(user.id)"
-                        [style.--mat-checkbox-unselected-icon-color]="color(user.id)"
-                        [style.--mat-checkbox-disabled-label-color]="'var(--mat-sys-on-surface)'">
-            <span class="name" [title]="name(user)">{{ name(user) }}{{ isMe(user) ? ' (moi)' : '' }}</span>
-          </mat-checkbox>
+          <!-- la couleur de la case est celle de la personne dans le planning -->
+          <z-checkbox [ngModel]="isMe(user) || store.selected().has(user.id)" [zDisabled]="isMe(user)"
+                      (checkChange)="store.toggle(user.id, $event)"
+                      [style.--primary]="color(user.id)" [style.--input]="color(user.id)" class="disabled:opacity-100">
+            <span class="truncate text-sm" [title]="name(user)">{{ name(user) }}{{ isMe(user) ? ' (moi)' : '' }}</span>
+          </z-checkbox>
         } @empty {
-          <p class="empty">Aucun résultat</p>
+          <p class="m-2 text-xs text-muted-foreground">Aucun résultat</p>
         }
       </div>
     }
   `,
   styles: `
     :host { display: flex; flex-direction: column; min-height: 0; padding: 4px 8px 8px; }
-    .head { display: flex; align-items: center; justify-content: space-between; padding: 8px; border: none; cursor: pointer;
-      background: none; color: inherit; font: var(--mat-sys-title-small); }
-    .search { display: flex; align-items: center; gap: 4px; margin: 0 8px; padding: 0 8px; border-radius: 18px;
-      background: var(--mat-sys-surface-container-high); color: var(--mat-sys-on-surface-variant); }
-    .search:focus-within { outline: 2px solid var(--mat-sys-primary); }
-    .search mat-icon { flex: none; width: 20px; height: 20px; font-size: 20px; }
-    .search input { flex: 1; min-width: 0; height: 36px; border: none; outline: none; background: none; color: var(--mat-sys-on-surface);
-      font: var(--mat-sys-body-medium); }
-    .all { align-self: flex-start; margin: 4px 0 0 4px; }
-    .list { display: flex; flex-direction: column; min-height: 80px; overflow-y: auto; }
-    mat-checkbox { --mat-checkbox-state-layer-size: 34px; }
-    .name { font: var(--mat-sys-body-medium); }
-    .empty { margin: 8px; color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
   `,
 })
 export class PeopleFilter {

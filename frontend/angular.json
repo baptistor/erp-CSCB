@@ -34,7 +34,7 @@
               "@fullcalendar/angular/skeleton.css",
               "@fullcalendar/angular/themes/monarch/theme.css",
               "@fullcalendar/angular/themes/monarch/palettes/blue.css",
-              "src/styles.scss"
+              "src/styles.css"
             ]
           },
           "configurations": {

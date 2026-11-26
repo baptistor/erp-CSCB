@@ -1,10 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { NonNullableFormBuilder, ReactiveFormsModule, Validators } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
-import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { injectDialogData, ZardDialogImports, ZardDialogRef } from '@/shared/components/dialog';
+import { ZardFieldImports } from '@/shared/components/field';
+import { ZardInputComponent } from '@/shared/components/input';
 import { SpecialDayInput, UserSummary } from '../../api/models';
 import { extraError, formatMinutes, toMinutes, WorkedRange } from '../../shared/schedule-rules';
 import { fullName } from '../../shared/user-color';
@@ -25,61 +25,51 @@ export type DayDialogResult = { action: 'save'; input: SpecialDayInput } | { act
 /** « Ajouter des heures » à un jour, en dehors de la journée type et de la pause de midi (spec §1). */
 @Component({
   selector: 'app-day-dialog',
-  imports: [ReactiveFormsModule, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
+  imports: [ReactiveFormsModule, ZardButtonComponent, ZardDialogImports, ZardFieldImports, ZardInputComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h2 mat-dialog-title>{{ data.existing ? 'Heures ajoutées' : 'Ajouter des heures' }}</h2>
-    <form [formGroup]="form" (ngSubmit)="save()">
-      <mat-dialog-content class="fields">
-        <p class="info">
-          {{ name }} — journée type :
-          <strong>{{ typicalText() }}</strong>.
-          Pensez à déclarer ces heures dans « Mes demandes ».
-        </p>
-        <mat-form-field appearance="outline">
-          <mat-label>Date</mat-label>
-          <input matInput type="date" formControlName="date" />
-        </mat-form-field>
-        <div class="row">
-          <mat-form-field appearance="outline">
-            <mat-label>Début</mat-label>
-            <input matInput type="time" step="900" formControlName="startTime" />
-          </mat-form-field>
-          <mat-form-field appearance="outline">
-            <mat-label>Fin</mat-label>
-            <input matInput type="time" step="900" formControlName="endTime" />
-          </mat-form-field>
-        </div>
-        @if (error()) {
-          <p class="error">{{ error() }}</p>
-        } @else {
-          <p class="added">+ {{ added() }}</p>
-        }
-      </mat-dialog-content>
-      <mat-dialog-actions>
+    <z-dialog-header>
+      <z-dialog-title>{{ data.existing ? 'Heures ajoutées' : 'Ajouter des heures' }}</z-dialog-title>
+      <z-dialog-description>
+        {{ name }} — journée type : <strong>{{ typicalText() }}</strong>.
+        Pensez à déclarer ces heures dans « Mes demandes ».
+      </z-dialog-description>
+    </z-dialog-header>
+    <form class="flex flex-col gap-4" [formGroup]="form" (ngSubmit)="save()">
+      <z-field>
+        <label z-field-label for="day-date">Date</label>
+        <input z-input id="day-date" type="date" formControlName="date" />
+      </z-field>
+      <div class="flex gap-3">
+        <z-field class="flex-1">
+          <label z-field-label for="day-start">Début</label>
+          <input z-input id="day-start" type="time" step="900" formControlName="startTime" />
+        </z-field>
+        <z-field class="flex-1">
+          <label z-field-label for="day-end">Fin</label>
+          <input z-input id="day-end" type="time" step="900" formControlName="endTime" />
+        </z-field>
+      </div>
+      @if (error()) {
+        <p class="text-sm text-destructive">{{ error() }}</p>
+      } @else {
+        <p class="text-sm font-medium">+ {{ added() }}</p>
+      }
+      <z-dialog-footer>
         @if (data.existing) {
-          <button mat-button type="button" class="remove" (click)="remove()">Retirer ces heures</button>
+          <button z-button zType="destructive" type="button" class="sm:mr-auto" (click)="remove()">
+            Retirer ces heures
+          </button>
         }
-        <span class="spacer"></span>
-        <button mat-button type="button" mat-dialog-close>Annuler</button>
-        <button mat-flat-button type="submit" [disabled]="form.invalid || error() !== null">Enregistrer</button>
-      </mat-dialog-actions>
+        <button z-button zType="outline" type="button" z-dialog-close>Annuler</button>
+        <button z-button type="submit" [disabled]="form.invalid || error() !== null">Enregistrer</button>
+      </z-dialog-footer>
     </form>
-  `,
-  styles: `
-    .fields { display: flex; flex-direction: column; min-width: min(380px, 80vw); padding-top: 8px; }
-    .row { display: flex; gap: 12px; }
-    .row mat-form-field { flex: 1; }
-    .info { color: var(--mat-sys-on-surface-variant); margin: 0 0 12px; font: var(--mat-sys-body-small); }
-    .added { margin: 0; font: var(--mat-sys-title-small); }
-    .error { color: var(--mat-sys-error); margin: 0; }
-    .spacer { flex: 1; }
-    .remove { color: var(--mat-sys-error); }
   `,
 })
 export class DayDialog {
-  protected readonly data = inject<DayDialogData>(MAT_DIALOG_DATA);
-  private readonly ref = inject<MatDialogRef<DayDialog, DayDialogResult>>(MatDialogRef);
+  protected readonly data = injectDialogData<DayDialogData>();
+  private readonly ref = inject<ZardDialogRef<DayDialog, DayDialogResult>>(ZardDialogRef);
   private readonly fb = inject(NonNullableFormBuilder);
 
   protected readonly name = fullName(this.data.user);

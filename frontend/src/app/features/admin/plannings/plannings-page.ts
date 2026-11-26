@@ -1,5 +1,6 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
-import { MatTabsModule } from '@angular/material/tabs';
+import { ZardTabsImports } from '@/shared/components/tabs';
+import { PageHeader } from '../../../shared/page-header';
 import { Api } from '../../../api/api';
 import { getUsers } from '../../../api/functions';
 import { UserSummary } from '../../../api/models';
@@ -14,24 +15,28 @@ import { TypicalWeekForm } from './typical-week-form';
  */
 @Component({
   selector: 'app-plannings-page',
-  imports: [MatTabsModule, TypicalWeekForm, SpecialDaysAdmin, SchoolHolidaysAdmin, BalancesAdmin],
+  imports: [PageHeader, ZardTabsImports, TypicalWeekForm, SpecialDaysAdmin, SchoolHolidaysAdmin, BalancesAdmin],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'mx-auto flex max-w-5xl flex-col gap-6' },
   template: `
-    <h1>Édition des plannings</h1>
-    <mat-tab-group>
-      <mat-tab label="Horaires">
-        <app-typical-week-form (userChange)="selectUser($event)" />
-        @if (selectedUser(); as user) {
-          <app-special-days-admin [user]="user" />
-        }
-      </mat-tab>
-      <mat-tab label="Vacances scolaires">
-        <app-school-holidays-admin />
-      </mat-tab>
-      <mat-tab label="Soldes">
-        <app-balances-admin />
-      </mat-tab>
-    </mat-tab-group>
+    <app-page-header title="Édition des plannings"
+                     description="Semaines type et contrats, vacances scolaires et soldes d'heures de l'équipe." />
+    <z-tab-group>
+      <z-tab label="Horaires">
+        <div class="flex flex-col gap-6 pt-6">
+          <app-typical-week-form (userChange)="selectUser($event)" />
+          @if (selectedUser(); as user) {
+            <app-special-days-admin [user]="user" />
+          }
+        </div>
+      </z-tab>
+      <z-tab label="Vacances scolaires">
+        <div class="pt-6"><app-school-holidays-admin /></div>
+      </z-tab>
+      <z-tab label="Soldes">
+        <div class="pt-6"><app-balances-admin /></div>
+      </z-tab>
+    </z-tab-group>
   `,
 })
 export class PlanningsPage {

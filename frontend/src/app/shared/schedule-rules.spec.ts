@@ -1,16 +1,4 @@
-import {
-  absenceSelectionAllowed,
-  canEditDay,
-  contractStatus,
-  defaultExtra,
-  extraError,
-  formatMinutes,
-  isValidWeeklyHours,
-  mergeRanges,
-  outsideTypical,
-  rangeError,
-  workedMinutes,
-} from './schedule-rules';
+import { absenceSelectionAllowed, canEditDay, contractStatus, defaultExtra, extraError, formatMinutes, isValidWeeklyHours, mergeRanges, outsideTypical, quarterSlots, rangeError, workedMinutes } from './schedule-rules';
 
 describe('schedule-rules', () => {
   it('accepte une journée de n’importe quelle durée (plus de minimum par jour)', () => {
@@ -151,5 +139,10 @@ describe('heures ajoutées et pause de midi', () => {
       { start: '13:30', end: '17:00' },
       { start: '18:00', end: '20:00' },
     ]);
+  });
+
+  it('créneaux au quart d’heure, valeur hors plage conservée', () => {
+    expect(quarterSlots('12:00', '12:30')).toEqual(['12:00', '12:15', '12:30']);
+    expect(quarterSlots('12:00', '12:30', '07:45')).toEqual(['07:45', '12:00', '12:15', '12:30']);
   });
 });

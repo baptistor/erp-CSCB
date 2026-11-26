@@ -1,10 +1,10 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
-import { MAT_DIALOG_DATA, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { injectDialogData, ZardDialogImports, ZardDialogRef } from '@/shared/components/dialog';
+import { ZardFieldImports } from '@/shared/components/field';
+import { ZardTextareaComponent } from '@/shared/components/textarea';
+import { ZardToggleGroupComponent, ZardToggleGroupItem } from '@/shared/components/toggle-group';
 import { AbsenceType } from '../../api/models';
 import { ABSENCE_TYPE_LABELS, formatHours } from '../../shared/requests';
 
@@ -30,47 +30,46 @@ export function recupExceedsAvailable(type: AbsenceType, hours: number, availabl
 /** Fenêtre ouverte au relâchement de la souris (spec §3) : récap, type, motif facultatif. */
 @Component({
   selector: 'app-absence-dialog',
-  imports: [FormsModule, MatButtonModule, MatButtonToggleModule, MatDialogModule, MatFormFieldModule, MatInputModule],
+  imports: [FormsModule, ZardButtonComponent, ZardDialogImports, ZardFieldImports, ZardTextareaComponent, ZardToggleGroupComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h2 mat-dialog-title>Demander une absence</h2>
-    <mat-dialog-content class="fields">
-      <p class="summary">{{ data.summary }} — <strong>{{ hoursText(data.hours) }}</strong></p>
-      <mat-button-toggle-group [value]="type()" (change)="type.set($event.value)" aria-label="Type d'absence">
-        @for (t of types; track t) {
-          <mat-button-toggle [value]="t">{{ labels[t] }}</mat-button-toggle>
-        }
-      </mat-button-toggle-group>
+    <z-dialog-header>
+      <z-dialog-title>Demander une absence</z-dialog-title>
+      <z-dialog-description>
+        {{ data.summary }} — <strong class="text-foreground">{{ hoursText(data.hours) }}</strong>
+      </z-dialog-description>
+    </z-dialog-header>
+    <div class="flex flex-col gap-4">
+      <z-toggle-group zMode="single" zType="outline" [zDeselectable]="false" [zItems]="typeItems"
+                      [zValue]="type()" (valueChange)="type.set($any($event))" aria-label="Type d'absence" />
       @if (type() === 'RECUP_HEURES_SUP' && data.available != null) {
-        <p class="info">Disponible pour une récupération : <strong>{{ hoursText(data.available) }}</strong></p>
+        <p class="text-sm text-muted-foreground">
+          Disponible pour une récupération : <strong>{{ hoursText(data.available) }}</strong>
+        </p>
       }
       @if (exceeds()) {
-        <p class="error">Solde insuffisant : choisissez « Sans solde » ou une plage plus courte.</p>
+        <p class="text-sm text-destructive">Solde insuffisant : choisissez « Sans solde » ou une plage plus courte.</p>
       }
-      <mat-form-field appearance="outline" class="comment">
-        <mat-label>Motif (facultatif)</mat-label>
-        <textarea matInput rows="3" [(ngModel)]="comment" cdkFocusInitial></textarea>
-      </mat-form-field>
-    </mat-dialog-content>
-    <mat-dialog-actions align="end">
-      <button mat-button type="button" mat-dialog-close>Annuler</button>
-      <button mat-flat-button type="button" [disabled]="exceeds()" (click)="send()">Envoyer la demande</button>
-    </mat-dialog-actions>
-  `,
-  styles: `
-    .fields { display: flex; flex-direction: column; gap: 12px; min-width: min(420px, 80vw); }
-    .summary { margin: 0; }
-    .info { margin: 0; color: var(--mat-sys-on-surface-variant); }
-    .error { margin: 0; color: var(--mat-sys-error); }
-    .comment { width: 100%; }
+      <z-field>
+        <label z-field-label for="absence-comment">Motif (facultatif)</label>
+        <textarea z-textarea id="absence-comment" rows="3" placeholder="ex. rendez-vous médical" [(ngModel)]="comment"></textarea>
+      </z-field>
+    </div>
+    <z-dialog-footer>
+      <button z-button zType="outline" type="button" z-dialog-close>Annuler</button>
+      <button z-button type="button" [disabled]="exceeds()" (click)="send()">Envoyer la demande</button>
+    </z-dialog-footer>
   `,
 })
 export class AbsenceDialog {
-  protected readonly data = inject<AbsenceDialogData>(MAT_DIALOG_DATA);
-  private readonly ref = inject<MatDialogRef<AbsenceDialog, AbsenceDialogResult>>(MatDialogRef);
+  protected readonly data = injectDialogData<AbsenceDialogData>();
+  private readonly ref = inject<ZardDialogRef<AbsenceDialog, AbsenceDialogResult>>(ZardDialogRef);
 
-  protected readonly types: AbsenceType[] = ['RECUP_HEURES_SUP', 'SANS_SOLDE'];
-  protected readonly labels = ABSENCE_TYPE_LABELS;
+  private readonly types: AbsenceType[] = ['RECUP_HEURES_SUP', 'SANS_SOLDE'];
+  protected readonly typeItems: ZardToggleGroupItem[] = this.types.map((t) => ({
+    value: t,
+    label: ABSENCE_TYPE_LABELS[t],
+  }));
   protected readonly type = signal<AbsenceType>(
     recupExceedsAvailable('RECUP_HEURES_SUP', this.data.hours, this.data.available) ? 'SANS_SOLDE' : 'RECUP_HEURES_SUP',
   );

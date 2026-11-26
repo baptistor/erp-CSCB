@@ -1,52 +1,47 @@
 import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
-import { MatCardModule } from '@angular/material/card';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
 import { Router } from '@angular/router';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardCardImports } from '@/shared/components/card';
+import { ZardFieldImports } from '@/shared/components/field';
+import { ZardInputComponent } from '@/shared/components/input';
 import { AuthService } from './auth.service';
 
 /** Connexion simulée (profil dev du back) — remplacée par le SSO Entra ID en prod. */
 @Component({
   selector: 'app-dev-login',
-  imports: [FormsModule, MatButtonModule, MatCardModule, MatFormFieldModule, MatInputModule],
+  imports: [FormsModule, ZardButtonComponent, ZardCardImports, ZardFieldImports, ZardInputComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <mat-card class="login" appearance="outlined">
-      <mat-card-header>
-        <mat-card-title>Connexion (mode développement)</mat-card-title>
-        <mat-card-subtitle>Identité simulée, sans SSO</mat-card-subtitle>
-      </mat-card-header>
-      <mat-card-content>
-        <form (ngSubmit)="login(email)">
-          <mat-form-field appearance="outline" class="full">
-            <mat-label>Email</mat-label>
-            <input matInput type="email" name="email" [(ngModel)]="email" required />
-          </mat-form-field>
-          <button mat-flat-button type="submit" [disabled]="!email || pending()">Se connecter</button>
+    <z-card class="w-full max-w-[460px]">
+      <z-card-header>
+        <z-card-title>Connexion (mode développement)</z-card-title>
+        <z-card-description>Identité simulée, sans SSO</z-card-description>
+      </z-card-header>
+      <z-card-content class="flex flex-col gap-6">
+        <form class="flex flex-col gap-4" (ngSubmit)="login(email)">
+          <z-field>
+            <label z-field-label for="email">Email</label>
+            <input z-input id="email" type="email" name="email" [(ngModel)]="email" required />
+          </z-field>
+          <button z-button type="submit" class="self-start" [disabled]="!email || pending()">Se connecter</button>
         </form>
         @if (error()) {
-          <p class="error">{{ error() }}</p>
+          <p class="text-sm text-destructive">{{ error() }}</p>
         }
-        <p class="hint">Comptes de démo :</p>
-        <div class="quick">
+        <div class="flex flex-col gap-2">
+          <p class="text-sm text-muted-foreground">Comptes de démo :</p>
           @for (demo of demoUsers; track demo) {
-            <button mat-stroked-button type="button" (click)="login(demo)" [disabled]="pending()">
+            <button z-button zType="outline" type="button" (click)="login(demo)" [disabled]="pending()">
               {{ demo }}
             </button>
           }
         </div>
-      </mat-card-content>
-    </mat-card>
+      </z-card-content>
+    </z-card>
   `,
   styles: `
     :host { display: flex; justify-content: center; padding: 48px 16px; }
-    .login { width: 100%; max-width: 460px; }
-    .full { width: 100%; margin-top: 16px; }
-    .quick { display: flex; flex-direction: column; gap: 8px; }
-    .hint { margin-top: 24px; color: var(--mat-sys-on-surface-variant); }
-    .error { color: var(--mat-sys-error); }
   `,
 })
 export class DevLogin {

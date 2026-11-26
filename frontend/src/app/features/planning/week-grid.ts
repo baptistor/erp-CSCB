@@ -158,36 +158,36 @@ interface Drag {
   styles: `
     :host { display: block; overflow-x: auto; }
     .wg { --axis-w: 56px; min-width: calc(var(--axis-w) + 7 * var(--day-min)); user-select: none;
-      border: 1px solid var(--mat-sys-outline-variant); border-radius: 12px; overflow: clip;
-      background: var(--planning-bg, var(--mat-sys-surface)); }
+      border: 1px solid var(--border); border-radius: 12px; overflow: clip;
+      background: var(--planning-bg, var(--background)); }
     .row { display: grid; grid-template-columns: var(--axis-w) repeat(7, minmax(var(--day-min), 1fr)); }
     /* colonne des heures figée pendant le défilement horizontal (overflow: clip ci-dessus, hidden l'empêcherait) */
-    .axis { position: sticky; left: 0; z-index: 4; background: var(--planning-bg, var(--mat-sys-surface)); border-right: 1px solid var(--mat-sys-outline-variant); }
-    .head { border-bottom: 1px solid var(--mat-sys-outline-variant); }
-    .day-head { padding: 6px 2px 4px; text-align: center; border-left: 1px solid var(--mat-sys-outline-variant); }
-    .day-head .dow { font: var(--mat-sys-label-small); text-transform: uppercase; color: var(--mat-sys-on-surface-variant); }
-    .day-head .num { font: var(--mat-sys-title-medium); }
-    .day-head.today .num { background: var(--mat-sys-primary); color: var(--mat-sys-on-primary); border-radius: 50%;
+    .axis { position: sticky; left: 0; z-index: 4; background: var(--planning-bg, var(--background)); border-right: 1px solid var(--border); }
+    .head { border-bottom: 1px solid var(--border); }
+    .day-head { padding: 6px 2px 4px; text-align: center; border-left: 1px solid var(--border); }
+    .day-head .dow { font-size: 11px; font-weight: 500; line-height: 16px; text-transform: uppercase; color: var(--muted-foreground); }
+    .day-head .num { font-size: 16px; font-weight: 500; line-height: 24px; }
+    .day-head.today .num { background: var(--primary); color: var(--primary-foreground); border-radius: 50%;
       padding: 2px 7px; }
     .people { display: flex; margin-top: 4px; }
     .initials { flex: 1; min-width: 0; font: 600 10px/16px sans-serif; color: #fff; overflow: hidden; margin: 0 1px;
       border-radius: 4px; }
     .dense .initials { font-size: 9px; letter-spacing: -0.3px; border-radius: 3px; }
     .dense .work, .dense .absence, .dense .absence-day { border-radius: 3px; }
-    .allday { border-bottom: 1px solid var(--mat-sys-outline-variant); min-height: 28px; }
-    .allday-label { font: var(--mat-sys-label-small); color: var(--mat-sys-on-surface-variant); padding: 4px; }
-    .allday-cell { display: flex; border-left: 1px solid var(--mat-sys-outline-variant); min-height: 28px; }
+    .allday { border-bottom: 1px solid var(--border); min-height: 28px; }
+    .allday-label { font-size: 11px; font-weight: 500; line-height: 16px; color: var(--muted-foreground); padding: 4px; }
+    .allday-cell { display: flex; border-left: 1px solid var(--border); min-height: 28px; }
     .allday-cell .sub { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding: 2px 1px; }
-    .allday-cell .absence { position: relative; font: var(--mat-sys-label-small); padding: 2px 4px; overflow: hidden;
+    .allday-cell .absence { position: relative; font-size: 11px; font-weight: 500; line-height: 16px; padding: 2px 4px; overflow: hidden;
       white-space: nowrap; }
     .selectable .allday-cell, .selectable .day-col { cursor: crosshair; }
-    .allday-cell.selecting { background: color-mix(in srgb, var(--mat-sys-primary) 18%, transparent); }
-    .hour { position: absolute; right: 6px; transform: translateY(-50%); font: var(--mat-sys-label-small);
-      color: var(--mat-sys-on-surface-variant); }
-    .day-col { position: relative; border-left: 1px solid var(--mat-sys-outline-variant);
+    .allday-cell.selecting { background: color-mix(in srgb, var(--primary) 18%, transparent); }
+    .hour { position: absolute; right: 6px; transform: translateY(-50%); font-size: 11px; font-weight: 500; line-height: 16px;
+      color: var(--muted-foreground); }
+    .day-col { position: relative; border-left: 1px solid var(--border);
       background-image: repeating-linear-gradient(to bottom, transparent 0 calc(var(--hour-h) - 1px),
-        var(--mat-sys-outline-variant) calc(var(--hour-h) - 1px) var(--hour-h)); }
-    .day-col.today { background-color: color-mix(in srgb, var(--mat-sys-primary) 4%, transparent); }
+        var(--border) calc(var(--hour-h) - 1px) var(--hour-h)); }
+    .day-col.today { background-color: color-mix(in srgb, var(--primary) 4%, transparent); }
     .day-col .sub { position: absolute; top: 0; bottom: 0; }
     .work { position: absolute; left: 1px; right: 1px; border-radius: 4px; opacity: 0.85; overflow: hidden; }
     .work .label { display: block; padding: 2px 4px; font: 600 11px/14px sans-serif; color: #fff; }
@@ -211,17 +211,17 @@ interface Drag {
     .vlabel { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; padding: 6px 1px;
       border-radius: 3px; background: rgba(255, 255, 255, 0.9); color: #3c4043; font: 600 11px/12px sans-serif; }
     .cancel { position: absolute; top: 2px; right: 2px; z-index: 3; width: 18px; height: 18px; padding: 0; border: none;
-      border-radius: 50%; background: var(--mat-sys-error); color: var(--mat-sys-on-error); font: 700 13px/18px sans-serif;
+      border-radius: 50%; background: var(--destructive); color: var(--destructive-foreground); font: 700 13px/18px sans-serif;
       cursor: pointer; }
     .break { position: absolute; left: 0; right: 0; z-index: 2; background: #e4e6e9; cursor: not-allowed;
-      border-block: 1px solid var(--mat-sys-outline-variant); box-sizing: border-box; }
+      border-block: 1px solid var(--border); box-sizing: border-box; }
     /* colonnes étroites : la croix et le repère « journée » tiennent dans 14 px */
     .dense .cancel { right: 0; left: 0; margin: 0 auto; width: 12px; height: 16px; border-radius: 4px; font: 700 11px/16px sans-serif; }
     .dense .allday-cell .absence { padding: 0; font-size: 0; min-height: 20px; }
     .dense .absence-day { justify-content: center; }
     .preview { box-sizing: border-box; position: absolute; left: 0; right: 0; z-index: 2; border-radius: 4px; pointer-events: none;
-      background: color-mix(in srgb, var(--mat-sys-primary) 25%, transparent); border: 2px solid var(--mat-sys-primary);
-      font: 600 11px/14px sans-serif; color: var(--mat-sys-on-primary-container); padding: 2px 4px; }
+      background: color-mix(in srgb, var(--primary) 25%, transparent); border: 2px solid var(--primary);
+      font: 600 11px/14px sans-serif; color: var(--primary); padding: 2px 4px; }
     .now { position: absolute; left: 0; right: 0; z-index: 2; height: 2px; background: #d93025; pointer-events: none; }
   `,
 })

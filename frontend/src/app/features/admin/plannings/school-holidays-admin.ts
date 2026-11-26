@@ -1,6 +1,8 @@
 import { ChangeDetectionStrategy, Component, computed, inject, resource, signal } from '@angular/core';
-import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MatSnackBar } from '@angular/material/snack-bar';
+import { ZardCardImports } from '@/shared/components/card';
+import { ZardSkeletonComponent } from '@/shared/components/skeleton';
+import { ZardSonnerService } from '@/shared/components/sonner';
+import { ZardToggleComponent } from '@/shared/components/toggle';
 import { Api } from '../../../api/api';
 import { getSchoolHolidayWeeks, markSchoolHolidayWeek, unmarkSchoolHolidayWeek } from '../../../api/functions';
 import { addDays, errorMessage, toIsoDate } from '../../../shared/dates';
@@ -31,48 +33,62 @@ export function upcomingWeeks(today: string, count: number): { month: string; mo
 /** Admin : marquer à l'avance les semaines de vacances scolaires, communes à tous (spec §1). */
 @Component({
   selector: 'app-school-holidays-admin',
-  imports: [MatCheckboxModule],
+  imports: [ZardCardImports, ZardSkeletonComponent, ZardToggleComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'flex flex-col gap-6' },
   template: `
-    <p class="info">
-      Cochez les semaines de vacances scolaires : les horaires « vacances » de chaque employé s'y appliquent.
-      La semaine en cours et les semaines passées ne sont plus modifiables.
-    </p>
+    <div class="flex flex-wrap items-baseline justify-between gap-2">
+      <p class="max-w-2xl text-sm text-muted-foreground">
+        Sélectionnez les semaines de vacances scolaires : les horaires « vacances » de chaque employé s'y appliquent.
+        La semaine en cours et les semaines passées ne sont plus modifiables.
+      </p>
+      @if (marked.hasValue()) {
+        <span class="text-sm"><strong class="tabular-nums">{{ markedCount() }}</strong> semaine{{ markedCount() > 1 ? 's' : '' }}
+          marquée{{ markedCount() > 1 ? 's' : '' }} sur {{ total }}</span>
+      }
+    </div>
     @if (marked.hasValue()) {
-      <div class="months">
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         @for (group of groups; track group.month) {
-          <section>
-            <h3>{{ group.month }}</h3>
-            @for (monday of group.mondays; track monday) {
-              <mat-checkbox [checked]="isMarked(monday)" [disabled]="saving()" (change)="toggle(monday, $event.checked)">
-                {{ label(monday) }}
-              </mat-checkbox>
-            }
-          </section>
+          <z-card zSize="sm">
+            <z-card-header>
+              <z-card-title class="first-letter:uppercase">{{ group.month }}</z-card-title>
+            </z-card-header>
+            <z-card-content class="flex flex-col gap-1.5">
+              @for (monday of group.mondays; track monday) {
+                <z-toggle zType="outline" zSize="sm" class="w-full justify-start font-normal data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:font-medium data-[state=on]:text-primary"
+                          [zValue]="isMarked(monday)" [zDisabled]="saving()"
+                          [zAriaLabel]="'Vacances scolaires, semaine du ' + label(monday)"
+                          (zToggleChange)="toggle(monday, $event)">
+                  {{ label(monday) }}
+                </z-toggle>
+              }
+            </z-card-content>
+          </z-card>
         }
       </div>
     } @else if (marked.error()) {
-      <p class="error">Impossible de charger les semaines de vacances.</p>
+      <p class="text-sm text-destructive">Impossible de charger les semaines de vacances.</p>
+    } @else {
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        @for (i of [1, 2, 3, 4, 5, 6]; track i) { <z-skeleton class="h-48 rounded-xl" /> }
+      </div>
     }
-  `,
-  styles: `
-    :host { display: block; padding-top: 16px; }
-    .info { color: var(--mat-sys-on-surface-variant); margin: 0 0 16px; }
-    .error { color: var(--mat-sys-error); }
-    .months { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px 24px; }
-    section { display: flex; flex-direction: column; }
-    h3 { margin: 0; font: var(--mat-sys-title-medium); }
-    h3::first-letter { text-transform: uppercase; }
   `,
 })
 export class SchoolHolidaysAdmin {
   private readonly api = inject(Api);
-  private readonly snack = inject(MatSnackBar);
+  private readonly toast = inject(ZardSonnerService);
 
   protected readonly groups = upcomingWeeks(toIsoDate(new Date()), WEEKS);
   protected readonly saving = signal(false);
   protected readonly marked = resource({ loader: () => this.api.invoke(getSchoolHolidayWeeks) });
   private readonly markedSet = computed(() => new Set(this.marked.hasValue() ? this.marked.value() : []));
+  protected readonly total = WEEKS;
+  /** Semaines marquées parmi celles affichées (les passées ne comptent plus). */
+  protected readonly markedCount = computed(
+    () => this.groups.flatMap((g) => g.mondays).filter((monday) => this.markedSet().has(monday)).length,
+  );
 
   protected isMarked(monday: string): boolean {
     return this.markedSet().has(monday);
@@ -86,11 +102,11 @@ export class SchoolHolidaysAdmin {
     this.saving.set(true);
     try {
       await this.api.invoke(checked ? markSchoolHolidayWeek : unmarkSchoolHolidayWeek, { weekStart });
-      this.snack.open(checked ? 'Semaine marquée « vacances scolaires »' : 'Semaine redevenue classique', 'OK', {
+      this.toast.success(checked ? 'Semaine marquée « vacances scolaires »' : 'Semaine redevenue classique', {
         duration: 3000,
       });
     } catch (error) {
-      this.snack.open(errorMessage(error), 'OK', { duration: 8000 });
+      this.toast.error(errorMessage(error), { duration: 8000 });
     }
     this.saving.set(false);
     this.marked.reload();

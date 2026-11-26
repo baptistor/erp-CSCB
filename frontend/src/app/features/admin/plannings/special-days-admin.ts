@@ -1,13 +1,19 @@
 import { ChangeDetectionStrategy, Component, computed, inject, input, resource } from '@angular/core';
-import { MatButtonModule } from '@angular/material/button';
-import { MatDialog } from '@angular/material/dialog';
-import { MatSnackBar } from '@angular/material/snack-bar';
-import { firstValueFrom } from 'rxjs';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCalendarPlus, lucideEllipsis, lucidePlus } from '@ng-icons/lucide';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardCardImports } from '@/shared/components/card';
+import { ZardDialogService } from '@/shared/components/dialog';
+import { ZardDropdownImports } from '@/shared/components/dropdown';
+import { ZardEmptyComponent } from '@/shared/components/empty';
+import { ZardItemImports } from '@/shared/components/item';
+import { ZardSonnerService } from '@/shared/components/sonner';
 import { Api } from '../../../api/api';
 import { createSpecialDay, deleteSpecialDay, getPlanning, updateSpecialDay } from '../../../api/functions';
 import { PlanningDay, UserSummary } from '../../../api/models';
 import { addDays, errorMessage, toIsoDate } from '../../../shared/dates';
-import { defaultExtra } from '../../../shared/schedule-rules';
+import { openDialog } from '../../../shared/dialogs';
+import { defaultExtra, formatMinutes, toMinutes } from '../../../shared/schedule-rules';
 import { DayDialog, DayDialogData, DayDialogResult } from '../../planning/day-dialog';
 
 const HORIZON_DAYS = 62;
@@ -16,49 +22,53 @@ const LONG_DATE = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'nume
 /** Admin : heures ajoutées à venir d'un employé (ajout / modification / retrait), en dehors de sa journée type. */
 @Component({
   selector: 'app-special-days-admin',
-  imports: [MatButtonModule],
+  imports: [NgIcon, ZardButtonComponent, ZardCardImports, ZardDropdownImports, ZardEmptyComponent, ZardItemImports],
+  viewProviders: [provideIcons({ lucideCalendarPlus, lucideEllipsis, lucidePlus })],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <h3>Heures ajoutées à venir ({{ horizon }} jours)</h3>
-    <button mat-stroked-button type="button" (click)="add()">Ajouter des heures</button>
-    @if (specialDays().length) {
-      <table>
-        <thead><tr><th>Date</th><th>Horaires</th><th></th></tr></thead>
-        <tbody>
-          @for (d of specialDays(); track d.date + d.startTime) {
-            <tr>
-              <td>{{ longDate(d.date) }}</td>
-              <td>{{ d.startTime }}–{{ d.endTime }}</td>
-              <td class="actions">
-                <button mat-button type="button" (click)="edit(d)">Modifier</button>
-                <button mat-button type="button" class="danger" (click)="remove(d)">Retirer</button>
-              </td>
-            </tr>
-          }
-        </tbody>
-      </table>
-    } @else if (planning.hasValue()) {
-      <p class="empty">Aucune heure ajoutée à venir : la semaine type s'applique.</p>
-    }
-  `,
-  styles: `
-    :host { display: block; margin-top: 32px; }
-    h3 { font: var(--mat-sys-title-medium); margin: 0 0 8px; }
-    table { border-collapse: collapse; margin-top: 12px; min-width: 480px; }
-    th { text-align: left; font: var(--mat-sys-label-medium); color: var(--mat-sys-on-surface-variant); }
-    th, td { padding: 6px 12px 6px 0; border-bottom: 1px solid var(--mat-sys-outline-variant); }
-    td:first-child::first-letter { text-transform: uppercase; }
-    .actions { text-align: right; white-space: nowrap; }
-    .danger { color: var(--mat-sys-error); }
-    .empty { color: var(--mat-sys-on-surface-variant); }
+    <z-card>
+      <z-card-header>
+        <z-card-title>Heures ajoutées à venir</z-card-title>
+        <z-card-description>Plages exceptionnelles des {{ horizon }} prochains jours, en dehors de la semaine type.</z-card-description>
+        <z-card-action>
+          <button z-button zType="outline" zSize="sm" type="button" (click)="add()"><ng-icon name="lucidePlus" /> Ajouter</button>
+        </z-card-action>
+      </z-card-header>
+      <z-card-content>
+        @if (specialDays().length) {
+          <div z-item-group class="gap-0">
+            @for (d of specialDays(); track d.date + d.startTime; let last = $last) {
+              <div z-item zSize="sm">
+                <div z-item-content>
+                  <div z-item-title class="first-letter:uppercase">{{ longDate(d.date) }}</div>
+                  <p z-item-description>{{ d.startTime }}–{{ d.endTime }}</p>
+                </div>
+                <span class="text-sm font-medium tabular-nums">+ {{ length(d) }}</span>
+                <button z-button zType="ghost" zSize="icon-sm" type="button" aria-label="Actions" z-dropdown [zDropdownMenu]="menu">
+                  <ng-icon name="lucideEllipsis" />
+                </button>
+                <z-dropdown-menu-content #menu="zDropdownMenuContent" zAlign="end" class="w-40">
+                  <z-dropdown-menu-item (click)="edit(d)">Modifier</z-dropdown-menu-item>
+                  <z-dropdown-menu-item zType="destructive" (click)="remove(d)">Retirer</z-dropdown-menu-item>
+                </z-dropdown-menu-content>
+              </div>
+              @if (!last) { <div z-item-separator class="my-0"></div> }
+            }
+          </div>
+        } @else if (planning.hasValue()) {
+          <z-empty zIcon="lucideCalendarPlus" zTitle="Aucune heure ajoutée"
+                   zDescription="La semaine type s'applique telle quelle sur les {{ horizon }} prochains jours." />
+        }
+      </z-card-content>
+    </z-card>
   `,
 })
 export class SpecialDaysAdmin {
   readonly user = input.required<UserSummary>();
 
   private readonly api = inject(Api);
-  private readonly dialog = inject(MatDialog);
-  private readonly snack = inject(MatSnackBar);
+  private readonly dialogs = inject(ZardDialogService);
+  private readonly toast = inject(ZardSonnerService);
 
   protected readonly horizon = HORIZON_DAYS;
   private readonly today = toIsoDate(new Date());
@@ -73,6 +83,10 @@ export class SpecialDaysAdmin {
       ? this.planning.value().days.filter((d) => d.userId === this.user().id && d.specialDayId != null)
       : [],
   );
+
+  protected length(day: PlanningDay): string {
+    return formatMinutes(toMinutes(day.endTime) - toMinutes(day.startTime));
+  }
 
   protected longDate(date: string): string {
     const [y, m, d] = date.split('-').map(Number);
@@ -121,15 +135,15 @@ export class SpecialDaysAdmin {
       existing: extraId != null,
       dayOf: (date) => this.day(date, extraId),
     };
-    return firstValueFrom(this.dialog.open<DayDialog, DayDialogData, DayDialogResult>(DayDialog, { data }).afterClosed());
+    return openDialog<DayDialog, DayDialogData, DayDialogResult>(this.dialogs, DayDialog, data);
   }
 
   private async run(call: () => Promise<unknown>, success: string): Promise<void> {
     try {
       await call();
-      this.snack.open(success, 'OK', { duration: 4000 });
+      this.toast.success(success);
     } catch (error) {
-      this.snack.open(errorMessage(error), 'OK', { duration: 8000 });
+      this.toast.error(errorMessage(error), { duration: 8000 });
     }
     this.planning.reload();
   }

@@ -31,3 +31,9 @@ export function tint(hex: string, ratio = 0.65): string {
 export function fullName(user: { firstName?: string | null; lastName?: string | null; email: string }): string {
   return [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email;
 }
+
+/** Initiales affichées dans l'avatar : « Alice Martin » -> « AM ». */
+export function initials(user: { firstName?: string | null; lastName?: string | null; email: string }): string {
+  const letters = [user.firstName, user.lastName].filter(Boolean).map((part) => part!.trim()[0]);
+  return (letters.join('') || user.email[0]).toUpperCase();
+}

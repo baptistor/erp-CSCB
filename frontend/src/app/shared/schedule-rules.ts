@@ -149,3 +149,16 @@ export function mergeRanges(ranges: WorkedRange[]): WorkedRange[] {
   }
   return merged;
 }
+
+/** Créneaux 'HH:mm' au quart d'heure de `from` à `to` inclus ; `current` est ajouté s'il en sort (donnée ancienne). */
+export function quarterSlots(from: string, to: string, current?: string): string[] {
+  const slots: string[] = [];
+  for (let m = toMinutes(from); m <= toMinutes(to); m += 15) {
+    slots.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+  }
+  if (current && !slots.includes(current)) {
+    slots.push(current);
+    slots.sort();
+  }
+  return slots;
+}

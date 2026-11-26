@@ -1,14 +1,31 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, OnInit, output, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  input,
+  OnInit,
+  output,
+  signal,
+  TemplateRef,
+  viewChild,
+} from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormGroup, NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
-import { MatButtonModule } from '@angular/material/button';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
-import { MatCheckboxModule } from '@angular/material/checkbox';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatIconModule } from '@angular/material/icon';
-import { MatInputModule } from '@angular/material/input';
-import { MatSelectModule } from '@angular/material/select';
-import { MatSnackBar } from '@angular/material/snack-bar';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideCircleCheck, lucideCircleX, lucideTriangleAlert } from '@ng-icons/lucide';
+import { ZardBadgeComponent } from '@/shared/components/badge';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardCardImports } from '@/shared/components/card';
+import { ZardComboboxImports } from '@/shared/components/combobox';
+import { ZardFieldImports } from '@/shared/components/field';
+import { ZardInputComponent } from '@/shared/components/input';
+import { ZardInputGroupImports } from '@/shared/components/input-group';
+import { ZardSelectImports } from '@/shared/components/select';
+import { ZardSkeletonComponent } from '@/shared/components/skeleton';
+import { ZardSonnerService } from '@/shared/components/sonner';
+import { ZardSwitchComponent } from '@/shared/components/switch';
+import { ZardToggleGroupComponent, ZardToggleGroupItem } from '@/shared/components/toggle-group';
 import { map, startWith } from 'rxjs';
 import { Api } from '../../../api/api';
 import { getUsers, getUserSchedule, updateUserSchedule } from '../../../api/functions';
@@ -21,10 +38,12 @@ import {
   DAY_LABELS,
   formatMinutes,
   isValidWeeklyHours,
+  quarterSlots,
   rangeError,
   toMinutes,
 } from '../../../shared/schedule-rules';
-import { fullName } from '../../../shared/user-color';
+import { fullName, setUserColors } from '../../../shared/user-color';
+import { UserAvatar } from '../../../shared/user-avatar';
 
 type DayGroup = FormGroup<{
   morning: FormControl<boolean>;
@@ -84,141 +103,173 @@ export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
 @Component({
   selector: 'app-typical-week-form',
   imports: [
+    NgIcon,
     ReactiveFormsModule,
-    MatButtonModule,
-    MatButtonToggleModule,
-    MatCheckboxModule,
-    MatFormFieldModule,
-    MatIconModule,
-    MatInputModule,
-    MatSelectModule,
+    UserAvatar,
+    ZardBadgeComponent,
+    ZardButtonComponent,
+    ZardCardImports,
+    ZardComboboxImports,
+    ZardFieldImports,
+    ZardInputComponent,
+    ZardInputGroupImports,
+    ZardSelectImports,
+    ZardSkeletonComponent,
+    ZardSwitchComponent,
+    ZardToggleGroupComponent,
   ],
+  viewProviders: [provideIcons({ lucideCircleCheck, lucideCircleX, lucideTriangleAlert })],
   changeDetection: ChangeDetectionStrategy.OnPush,
+  host: { class: 'flex flex-col gap-6' },
   template: `
     @if (!selfOnly()) {
-      <mat-form-field appearance="outline" class="user">
-        <mat-label>Employé</mat-label>
-        <mat-select [value]="userId()" (valueChange)="select($event)">
-          @for (user of users(); track user.id) {
-            <mat-option [value]="user.id">{{ name(user) }}</mat-option>
-          }
-        </mat-select>
-      </mat-form-field>
+      <div class="flex flex-wrap items-center gap-3">
+        <span class="text-sm font-medium">Employé</span>
+        <z-combobox zWidth="md" [zValue]="userKey()" (zValueChange)="pick($event)">
+          <z-combobox-input placeholder="Rechercher un employé" />
+          <z-combobox-content>
+            <z-combobox-empty>Aucun employé trouvé.</z-combobox-empty>
+            <z-combobox-list>
+              @for (user of users(); track user.id) {
+                <z-combobox-item [zValue]="'' + user.id" [zLabel]="name(user)">
+                  <span class="flex items-center gap-2"><app-user-avatar [user]="user" size="sm" /> {{ name(user) }}</span>
+                </z-combobox-item>
+              }
+            </z-combobox-list>
+          </z-combobox-content>
+        </z-combobox>
+      </div>
     }
 
+    <ng-template #holidayLabel>
+      Vacances scolaires
+      @if (!holidayFilled()) {
+        <z-badge class="todo">À compléter</z-badge>
+      }
+    </ng-template>
+
     @if (userId() != null && loaded()) {
-      <form [formGroup]="form" (ngSubmit)="save()">
-        <mat-form-field appearance="outline" class="min">
-          <mat-label>Contrat hebdomadaire</mat-label>
-          <input matInput type="number" step="0.25" min="0.25" max="168" formControlName="weeklyHours" />
-          <span matTextSuffix>h / semaine</span>
-          @if (selfOnly()) {
-            <mat-hint>Modifiable uniquement par un admin</mat-hint>
+      <form class="flex flex-col gap-4" [formGroup]="form" (ngSubmit)="save()">
+        <z-card>
+          <z-card-header class="border-b">
+            <z-card-title>Semaine type</z-card-title>
+            <z-card-description>
+              Horaires habituels, matin jusqu'à 12:30 et après-midi dès 13:30 : la pause de midi n'est pas comptée.
+            </z-card-description>
+          </z-card-header>
+          <z-card-content class="flex flex-col gap-6">
+            <div class="flex flex-wrap items-end justify-between gap-4">
+              <z-field class="w-56">
+                <label z-field-label for="weekly-hours">Contrat hebdomadaire</label>
+                <z-input-group>
+                  <input z-input id="weekly-hours" type="number" step="0.25" min="0.25" max="168"
+                         formControlName="weeklyHours" [attr.aria-invalid]="!weeklyValid() || null" />
+                  <z-input-group-addon zAlign="inline-end"><span z-input-group-text>h / semaine</span></z-input-group-addon>
+                </z-input-group>
+                @if (!weeklyValid()) {
+                  <z-field-error>Entre 0,25 et 168 h, par pas de 0,25 h</z-field-error>
+                } @else if (selfOnly()) {
+                  <p z-field-description>Modifiable uniquement par un admin</p>
+                }
+              </z-field>
+              <z-toggle-group class="flex-wrap" zMode="single" zType="outline" [zDeselectable]="false" [zItems]="weekItems()"
+                              [zValue]="week()" (valueChange)="show($any($event))" aria-label="Type de semaine" />
+            </div>
+            @if (week() === 'holiday' && !holidayFilled()) {
+              <p class="text-sm text-muted-foreground">
+                Semaine de vacances pas encore renseignée : elle reprend la semaine classique. Adaptez-la puis enregistrez.
+              </p>
+            }
+
+            <div class="flex flex-col divide-y">
+              @for (day of form.controls[week()].controls; track day; let i = $index) {
+                <div class="day" [formGroup]="day">
+                  <span class="text-sm font-medium">{{ labels[i] }}</span>
+                  <div class="slot">
+                    <span class="w-32 shrink-0 whitespace-nowrap"><z-switch formControlName="morning">Matin</z-switch></span>
+                    @if (day.controls.morning.value) {
+                      <z-select zSize="sm" class="w-24" formControlName="morningStart" [zAriaLabel]="labels[i] + ' matin début'">
+                        @for (t of slots('06:00', '12:30', day.controls.morningStart.value); track t) {
+                          <z-select-item [zValue]="t">{{ t }}</z-select-item>
+                        }
+                      </z-select>
+                      <span class="text-muted-foreground">–</span>
+                      <z-select zSize="sm" class="w-24" formControlName="morningEnd" [zAriaLabel]="labels[i] + ' matin fin'">
+                        @for (t of slots('06:00', '12:30', day.controls.morningEnd.value); track t) {
+                          <z-select-item [zValue]="t">{{ t }}</z-select-item>
+                        }
+                      </z-select>
+                    } @else {
+                      <span class="text-sm text-muted-foreground">Non travaillé</span>
+                    }
+                  </div>
+                  <div class="slot">
+                    <span class="w-32 shrink-0 whitespace-nowrap"><z-switch formControlName="afternoon">Après-midi</z-switch></span>
+                    @if (day.controls.afternoon.value) {
+                      <z-select zSize="sm" class="w-24" formControlName="afternoonStart" [zAriaLabel]="labels[i] + ' après-midi début'">
+                        @for (t of slots('13:30', '22:00', day.controls.afternoonStart.value); track t) {
+                          <z-select-item [zValue]="t">{{ t }}</z-select-item>
+                        }
+                      </z-select>
+                      <span class="text-muted-foreground">–</span>
+                      <z-select zSize="sm" class="w-24" formControlName="afternoonEnd" [zAriaLabel]="labels[i] + ' après-midi fin'">
+                        @for (t of slots('13:30', '22:00', day.controls.afternoonEnd.value); track t) {
+                          <z-select-item [zValue]="t">{{ t }}</z-select-item>
+                        }
+                      </z-select>
+                    } @else {
+                      <span class="text-sm text-muted-foreground">Non travaillé</span>
+                    }
+                  </div>
+                  <span class="text-right text-sm tabular-nums" [class.text-muted-foreground]="!durations()[i]">
+                    {{ durations()[i] ? duration(durations()[i]) : '—' }}
+                  </span>
+                  @if (dayErrors()[i]; as error) {
+                    <p class="col-span-full text-xs text-destructive">{{ error }}</p>
+                  }
+                </div>
+              }
+            </div>
+          </z-card-content>
+        </z-card>
+
+        <!-- barre collante : indicateur du contrat (vert / rouge / orange) + enregistrement -->
+        <div class="savebar" [attr.data-kind]="status()?.kind ?? 'under'" role="status" aria-live="polite">
+          @if (status(); as st) {
+            <ng-icon class="shrink-0" [name]="st.kind === 'ok' ? 'lucideCircleCheck' : st.kind === 'under' ? 'lucideCircleX' : 'lucideTriangleAlert'" />
+            <span class="flex-1 text-sm font-medium">{{ st.message }}</span>
+          } @else {
+            <span class="flex-1 text-sm">Total : {{ duration(total()) }}</span>
           }
-        </mat-form-field>
-        @if (!weeklyValid()) {
-          <p class="error">Contrat entre 0,25 et 168 h, par pas de 0,25 h</p>
-        }
-
-        <mat-button-toggle-group class="weeks" [value]="week()" (change)="show($event.value)" aria-label="Type de semaine">
-          <mat-button-toggle value="classic">Semaine classique</mat-button-toggle>
-          <mat-button-toggle value="holiday">
-            Vacances scolaires
-            @if (!holidayFilled()) {
-              <span class="todo">À compléter</span>
-            }
-          </mat-button-toggle>
-        </mat-button-toggle-group>
-        @if (week() === 'holiday' && !holidayFilled()) {
-          <p class="hint">
-            Semaine de vacances pas encore renseignée : elle reprend la semaine classique. Adaptez-la puis enregistrez.
-          </p>
-        }
-
-        @if (status(); as st) {
-          <div class="contract" [attr.data-kind]="st.kind" role="status" aria-live="polite">
-            <mat-icon>{{ st.kind === 'ok' ? 'check_circle' : st.kind === 'under' ? 'cancel' : 'warning' }}</mat-icon>
-            <span>{{ st.message }}</span>
-          </div>
-        }
-
-        <table class="week">
-          <thead>
-            <tr><th>Jour</th><th>Matin (jusqu'à 12:30)</th><th>Après-midi (dès 13:30)</th><th class="num">Durée</th><th></th></tr>
-          </thead>
-          <tbody>
-            @for (day of form.controls[week()].controls; track day; let i = $index) {
-              <tr [formGroup]="day">
-                <td>{{ labels[i] }}</td>
-                <td>
-                  <mat-checkbox formControlName="morning" [aria-label]="labels[i] + ' matin travaillé'" />
-                  @if (day.controls.morning.value) {
-                    <input class="time" type="time" step="900" formControlName="morningStart" [attr.aria-label]="labels[i] + ' matin début'" />
-                    –
-                    <input class="time" type="time" step="900" formControlName="morningEnd" [attr.aria-label]="labels[i] + ' matin fin'" />
-                  } @else {
-                    <span class="off">Non travaillé</span>
-                  }
-                </td>
-                <td>
-                  <mat-checkbox formControlName="afternoon" [aria-label]="labels[i] + ' après-midi travaillé'" />
-                  @if (day.controls.afternoon.value) {
-                    <input class="time" type="time" step="900" formControlName="afternoonStart" [attr.aria-label]="labels[i] + ' après-midi début'" />
-                    –
-                    <input class="time" type="time" step="900" formControlName="afternoonEnd" [attr.aria-label]="labels[i] + ' après-midi fin'" />
-                  } @else {
-                    <span class="off">Non travaillé</span>
-                  }
-                </td>
-                <td class="num">{{ durations()[i] ? duration(durations()[i]) : '—' }}</td>
-                <td class="error">{{ dayErrors()[i] }}</td>
-              </tr>
-            }
-          </tbody>
-          <tfoot>
-            <tr><td colspan="3" class="total-label">Total de la semaine (pause non comptée)</td>
-              <td class="num total">{{ duration(total()) }}</td><td></td></tr>
-          </tfoot>
-        </table>
-
-        <div class="actions">
-          <button mat-flat-button type="submit" [disabled]="!canSave() || saving()">Enregistrer</button>
           @if (blocked(); as reason) {
-            <span class="hint">{{ reason }}</span>
+            <span class="hidden text-xs text-muted-foreground lg:inline">{{ reason }}</span>
           }
+          <button z-button type="submit" [disabled]="!canSave() || saving()" [zLoading]="saving()">Enregistrer</button>
         </div>
       </form>
+    } @else {
+      <z-skeleton class="h-[560px] rounded-xl" />
     }
   `,
   styles: `
-    :host { display: block; padding-top: 16px; }
-    .user { width: 320px; max-width: 100%; }
-    .min { width: 320px; max-width: 100%; display: block; }
-    .week { border-collapse: collapse; margin: 8px 0 16px; }
-    .week th { text-align: left; font: var(--mat-sys-label-medium); color: var(--mat-sys-on-surface-variant); padding: 4px 12px 4px 0; }
-    .week td { padding: 4px 12px 4px 0; height: 44px; }
-    .time { font: var(--mat-sys-body-large); padding: 6px 8px; border: 1px solid var(--mat-sys-outline); border-radius: 4px; background: transparent; color: inherit; }
-    .weeks { margin: 12px 0 0; }
-    .todo { margin-left: 6px; padding: 2px 8px; border-radius: 10px; font: var(--mat-sys-label-small); color: #7a4100; background: #fef3e0; }
-    .off { color: var(--mat-sys-on-surface-variant); font-style: italic; }
-    .actions { display: flex; align-items: center; gap: 12px; }
-    .hint { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
-    .error { color: var(--mat-sys-error); font: var(--mat-sys-body-small); }
-    .num { text-align: right; white-space: nowrap; }
-    .total-label, .total { font: var(--mat-sys-title-small); border-top: 1px solid var(--mat-sys-outline-variant); }
-    /* indicateur du contrat : vert = respecté, rouge = il manque des heures, orange = heures en trop */
-    .contract { display: flex; align-items: flex-start; gap: 8px; max-width: 720px; margin: 16px 0 8px;
-      padding: 10px 14px; border-radius: 10px; font: var(--mat-sys-body-medium); border: 1px solid; }
-    .contract mat-icon { flex: none; }
-    .contract[data-kind='ok'] { color: #0d5a1f; background: #e6f4ea; border-color: #34a853; }
-    .contract[data-kind='under'] { color: #8c1d18; background: #fce8e6; border-color: #d93025; }
-    .contract[data-kind='over'] { color: #7a4100; background: #fef3e0; border-color: #f29900; }
+    .day { display: grid; align-items: center; gap: 12px 24px; padding: 12px 0;
+      grid-template-columns: 7rem 1fr 1fr 4rem; }
+    @media (max-width: 900px) { .day { grid-template-columns: 1fr auto; } .day .slot { grid-column: 1 / -1; } }
+    .slot { display: flex; align-items: center; gap: 8px; min-height: 32px; }
+    .todo { margin-left: 6px; background: color-mix(in oklab, var(--warning) 15%, transparent); color: var(--warning); }
+    /* vert = contrat respecté, rouge = il manque des heures, orange = heures en trop */
+    .savebar { --kind: var(--success); position: sticky; bottom: 16px; z-index: 10; display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px 10px 16px; border-radius: var(--radius); background: color-mix(in oklab, var(--kind) 8%, var(--background));
+      border: 1px solid color-mix(in oklab, var(--kind) 40%, transparent); color: var(--kind);
+      box-shadow: 0 4px 12px -2px rgb(0 0 0 / 0.08); }
+    .savebar[data-kind='under'] { --kind: var(--destructive); }
+    .savebar[data-kind='over'] { --kind: var(--warning); }
   `,
 })
 export class TypicalWeekForm implements OnInit {
   private readonly api = inject(Api);
   private readonly fb = inject(NonNullableFormBuilder);
-  private readonly snack = inject(MatSnackBar);
+  private readonly toast = inject(ZardSonnerService);
   private readonly auth = inject(AuthService);
 
   /** Mode employé : ses propres horaires uniquement. */
@@ -228,12 +279,18 @@ export class TypicalWeekForm implements OnInit {
 
   protected readonly users = signal<UserSummary[]>([]);
   protected readonly userId = signal<number | null>(null);
+  protected readonly userKey = computed(() => (this.userId() == null ? '' : String(this.userId())));
   protected readonly loaded = signal(false);
   protected readonly saving = signal(false);
   protected readonly labels = DAY_LABELS;
   protected readonly name = fullName;
 
   protected readonly week = signal<Week>('classic');
+  private readonly holidayLabel = viewChild.required<TemplateRef<void>>('holidayLabel');
+  protected readonly weekItems = computed<ZardToggleGroupItem[]>(() => [
+    { value: 'classic', label: 'Semaine classique' },
+    { value: 'holiday', template: this.holidayLabel() },
+  ]);
   /** La semaine de vacances a déjà été enregistrée (sinon elle reprend la classique). */
   protected readonly holidayFilled = signal(false);
 
@@ -278,6 +335,7 @@ export class TypicalWeekForm implements OnInit {
   });
   protected readonly canSave = computed(() => this.blocked() === null);
   protected readonly duration = formatMinutes;
+  protected readonly slots = quarterSlots;
 
   ngOnInit(): void {
     const me = this.auth.currentUser();
@@ -287,9 +345,14 @@ export class TypicalWeekForm implements OnInit {
       return;
     }
     void this.api.invoke(getUsers).then((users) => {
+      setUserColors(users.map((u) => u.id));
       this.users.set(users);
       if (users.length) void this.select(users[0].id);
     });
+  }
+
+  protected pick(value: string | string[] | null): void {
+    if (typeof value === 'string' && value && +value !== this.userId()) void this.select(+value);
   }
 
   protected async select(userId: number): Promise<void> {
@@ -301,7 +364,7 @@ export class TypicalWeekForm implements OnInit {
       this.fill(await this.api.invoke(getUserSchedule, { userId }));
       this.loaded.set(true);
     } catch (error) {
-      this.snack.open(errorMessage(error, 'Impossible de charger les horaires'), 'OK', { duration: 5000 });
+      this.toast.error(errorMessage(error, 'Impossible de charger les horaires'), { duration: 5000 });
     }
   }
 
@@ -328,9 +391,9 @@ export class TypicalWeekForm implements OnInit {
         },
       });
       this.fill(saved);
-      this.snack.open('Horaires enregistrés', 'OK', { duration: 3000 });
+      this.toast.success('Horaires enregistrés', { duration: 3000 });
     } catch (error) {
-      this.snack.open(errorMessage(error), 'OK', { duration: 8000 });
+      this.toast.error(errorMessage(error), { duration: 8000 });
     } finally {
       this.saving.set(false);
     }

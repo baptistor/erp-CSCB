@@ -7,14 +7,11 @@ import {
   OnInit,
   resource,
   signal,
+  TemplateRef,
   viewChild,
 } from '@angular/core';
-import { MatButtonModule } from '@angular/material/button';
-import { MatButtonToggleModule } from '@angular/material/button-toggle';
-import { MatDialog } from '@angular/material/dialog';
-import { MatIconModule } from '@angular/material/icon';
-import { MatSnackBar } from '@angular/material/snack-bar';
-import { MatTooltipModule } from '@angular/material/tooltip';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import { lucideChevronLeft, lucideChevronRight, lucideEye, lucidePencil } from '@ng-icons/lucide';
 import { FullCalendarComponent, FullCalendarModule } from '@fullcalendar/angular';
 import dayGridPlugin from '@fullcalendar/angular/daygrid';
 import interactionPlugin from '@fullcalendar/angular/interaction';
@@ -28,7 +25,13 @@ import type {
   EventSourceFuncInfo,
 } from 'fullcalendar';
 import frLocale from 'fullcalendar/locales/fr';
-import { firstValueFrom } from 'rxjs';
+import { ZardAlertDialogService } from '@/shared/components/alert-dialog';
+import { ZardBadgeComponent } from '@/shared/components/badge';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardDialogService } from '@/shared/components/dialog';
+import { ZardSonnerService } from '@/shared/components/sonner';
+import { ZardToggleGroupComponent, ZardToggleGroupItem } from '@/shared/components/toggle-group';
+import { ZardTooltipImports } from '@/shared/components/tooltip';
 import { Api } from '../../api/api';
 import {
   cancelAbsence,
@@ -41,11 +44,11 @@ import {
 } from '../../api/functions';
 import { AbsenceInput, Planning, PlanningAbsence, PlanningDay } from '../../api/models';
 import { addDays, errorMessage, toIsoDate } from '../../shared/dates';
+import { confirmDialog, openDialog } from '../../shared/dialogs';
 import { formatHours } from '../../shared/requests';
 import { defaultExtra, mergeRanges, outsideTypical, WorkedRange, workedMinutes } from '../../shared/schedule-rules';
 import { colorFor, fullName, tint } from '../../shared/user-color';
 import { AbsenceDialog, AbsenceDialogData, AbsenceDialogResult } from './absence-dialog';
-import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
 import { DayDialog, DayDialogData, DayDialogResult } from './day-dialog';
 import { PeopleStore } from './people-store';
 import { DaysSelection, OwnDayClick, RangeSelection, WeekGrid } from './week-grid';
@@ -71,37 +74,52 @@ function parseIso(date: string): Date {
  */
 @Component({
   selector: 'app-planning-calendar',
-  imports: [FullCalendarModule, MatButtonModule, MatButtonToggleModule, MatIconModule, MatTooltipModule, WeekGrid],
+  imports: [
+    FullCalendarModule,
+    NgIcon,
+    WeekGrid,
+    ZardBadgeComponent,
+    ZardButtonComponent,
+    ZardToggleGroupComponent,
+    ZardTooltipImports,
+  ],
+  viewProviders: [provideIcons({ lucideChevronLeft, lucideChevronRight, lucideEye, lucidePencil })],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { '[class.editing]': "mode() === 'edit'" },
   template: `
+    <ng-template #readItem>
+      <span class="inline-flex items-center gap-1" zTooltip="Consulter le planning"><ng-icon name="lucideEye" /> Lecture</span>
+    </ng-template>
+    <ng-template #editItem>
+      <span class="inline-flex items-center gap-1" zTooltip="Poser une absence ou ajouter des heures">
+        <ng-icon name="lucidePencil" /> Modifier
+      </span>
+    </ng-template>
+
     <div class="nav">
-      <button mat-icon-button type="button" (click)="shift(-1)" aria-label="Précédent"><mat-icon>chevron_left</mat-icon></button>
-      <button mat-icon-button type="button" (click)="shift(1)" aria-label="Suivant"><mat-icon>chevron_right</mat-icon></button>
-      <button mat-stroked-button type="button" (click)="anchor.set(todayDate())">Aujourd'hui</button>
+      <button z-button zType="ghost" zSize="icon" type="button" (click)="shift(-1)" aria-label="Précédent">
+        <ng-icon name="lucideChevronLeft" />
+      </button>
+      <button z-button zType="ghost" zSize="icon" type="button" (click)="shift(1)" aria-label="Suivant">
+        <ng-icon name="lucideChevronRight" />
+      </button>
+      <button z-button zType="outline" type="button" (click)="anchor.set(todayDate())">Aujourd'hui</button>
       <h2 class="title">
         {{ title() }}
         @if (holidayWeek()) {
-          <span class="holiday">Vacances scolaires</span>
+          <z-badge zType="secondary" class="ml-2 align-middle">Vacances scolaires</z-badge>
         }
       </h2>
-      <mat-button-toggle-group class="modes" [value]="mode()" (change)="mode.set($event.value)"
-                               aria-label="Mode du planning" hideSingleSelectionIndicator>
-        <mat-button-toggle value="read" matTooltip="Consulter le planning"><mat-icon>visibility</mat-icon> Lecture</mat-button-toggle>
-        <mat-button-toggle value="edit" matTooltip="Poser une absence ou ajouter des heures"><mat-icon>edit</mat-icon> Modifier</mat-button-toggle>
-      </mat-button-toggle-group>
-      <mat-button-toggle-group hideSingleSelectionIndicator [value]="view()" (change)="view.set($event.value)" aria-label="Vue">
-        <mat-button-toggle value="week">Semaine</mat-button-toggle>
-        <mat-button-toggle value="month">Mois</mat-button-toggle>
-      </mat-button-toggle-group>
+      <z-toggle-group zMode="single" zType="outline" [zDeselectable]="false" [zItems]="modeItems()"
+                      [zValue]="mode()" (valueChange)="mode.set($any($event))" aria-label="Mode du planning" />
+      <z-toggle-group zMode="single" zType="outline" [zDeselectable]="false" [zItems]="viewItems"
+                      [zValue]="view()" (valueChange)="view.set($any($event))" aria-label="Vue" />
     </div>
 
     @if (mode() === 'edit') {
       <div class="top">
-        <mat-button-toggle-group [value]="action()" (change)="action.set($event.value)" aria-label="Action">
-          <mat-button-toggle value="absence">Poser une absence</mat-button-toggle>
-          <mat-button-toggle value="hours">Ajouter des heures</mat-button-toggle>
-        </mat-button-toggle-group>
+        <z-toggle-group zMode="single" zType="outline" [zDeselectable]="false" [zItems]="actionItems"
+                        [zValue]="action()" (valueChange)="action.set($any($event))" aria-label="Action" />
         @if (available() != null) {
           <span class="available">Disponible pour une récup : <strong>{{ hours(available()!) }}</strong></span>
         }
@@ -132,22 +150,21 @@ function parseIso(date: string): Date {
     :host { display: block; }
     /* mode Édition : fond ambre clair sur toute la zone, grille comprise */
     :host { padding: 0 12px 12px; border-radius: 12px; transition: background-color 0.2s; }
-    :host(.editing) { background: #fff4d6; --planning-bg: #fffaf0; }
-    .top { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; padding-bottom: 4px; }
-    .modes .mat-button-toggle-checked { font-weight: 600; }
-    .modes mat-icon { font-size: 22px; height: 22px; width: 22px; margin-right: 4px; vertical-align: middle; }
-    .available { font: var(--mat-sys-body-medium); }
-    .hint { color: var(--mat-sys-on-surface-variant); margin: 0 0 8px; font: var(--mat-sys-body-medium); }
+    :host(.editing) { background: color-mix(in oklab, var(--warning) 14%, var(--background));
+      --planning-bg: color-mix(in oklab, var(--warning) 5%, var(--background)); }
+    .top { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; padding-bottom: 8px; }
+    .available { font-size: 14px; font-weight: 400; line-height: 20px; }
+    .hint { color: var(--muted-foreground); margin: 0 0 8px; font-size: 14px; font-weight: 400; line-height: 20px; }
     .nav { display: flex; align-items: center; gap: 8px; padding: 6px 0; flex-wrap: wrap; }
-    .title { flex: 1; margin: 0 8px; font: var(--mat-sys-title-large); }
-    .holiday { margin-left: 8px; padding: 3px 10px; border-radius: 12px; vertical-align: middle;
-      font: var(--mat-sys-label-medium); color: #00504a; background: #b2dfdb; }
+    .title { flex: 1; margin: 0 8px; font-size: 20px; font-weight: 600; line-height: 28px; }
+    .title::first-letter { text-transform: uppercase; }
   `,
 })
 export class PlanningCalendar implements OnInit {
   private readonly api = inject(Api);
-  private readonly dialog = inject(MatDialog);
-  private readonly snack = inject(MatSnackBar);
+  private readonly dialogs = inject(ZardDialogService);
+  private readonly alerts = inject(ZardAlertDialogService);
+  private readonly toast = inject(ZardSonnerService);
   private readonly store = inject(PeopleStore);
   private readonly calendar = viewChild(FullCalendarComponent);
 
@@ -164,6 +181,21 @@ export class PlanningCalendar implements OnInit {
   protected readonly anchor = signal(new Date());
   protected readonly mode = signal<Mode>('read');
   protected readonly action = signal<EditAction>('absence');
+
+  private readonly readItem = viewChild.required<TemplateRef<void>>('readItem');
+  private readonly editItem = viewChild.required<TemplateRef<void>>('editItem');
+  protected readonly modeItems = computed<ZardToggleGroupItem[]>(() => [
+    { value: 'read', template: this.readItem() },
+    { value: 'edit', template: this.editItem() },
+  ]);
+  protected readonly viewItems: ZardToggleGroupItem[] = [
+    { value: 'week', label: 'Semaine' },
+    { value: 'month', label: 'Mois' },
+  ];
+  protected readonly actionItems: ZardToggleGroupItem[] = [
+    { value: 'absence', label: 'Poser une absence' },
+    { value: 'hours', label: 'Ajouter des heures' },
+  ];
   protected readonly available = signal<number | null>(null);
   protected readonly hours = (h: number) => formatHours(h);
 
@@ -348,9 +380,7 @@ export class PlanningCalendar implements OnInit {
   }
 
   private openAbsenceDialog(data: AbsenceDialogData): Promise<AbsenceDialogResult | undefined> {
-    return firstValueFrom(
-      this.dialog.open<AbsenceDialog, AbsenceDialogData, AbsenceDialogResult>(AbsenceDialog, { data }).afterClosed(),
-    );
+    return openDialog<AbsenceDialog, AbsenceDialogData, AbsenceDialogResult>(this.dialogs, AbsenceDialog, data);
   }
 
   private async sendAbsence(body: AbsenceInput): Promise<void> {
@@ -367,19 +397,13 @@ export class PlanningCalendar implements OnInit {
   protected async cancel(id: number): Promise<void> {
     const absence = this.findAbsence(id);
     if (absence?.status === 'APPROVED') {
-      const confirmed = await firstValueFrom(
-        this.dialog
-          .open<ConfirmDialog, ConfirmDialogData, boolean>(ConfirmDialog, {
-            data: {
-              title: 'Supprimer une absence acceptée',
-              message:
-                `Supprimer votre absence acceptée ${this.describe(absence)} ? ` +
-                'Si c’est une récupération, ses heures seront rendues à votre solde.',
-              confirmLabel: 'Supprimer',
-            },
-          })
-          .afterClosed(),
-      );
+      const confirmed = await confirmDialog(this.alerts, {
+        title: 'Supprimer une absence acceptée',
+        message:
+          `Supprimer votre absence acceptée ${this.describe(absence)} ? ` +
+          'Si c’est une récupération, ses heures seront rendues à votre solde.',
+        confirmLabel: 'Supprimer',
+      });
       if (!confirmed) return;
     }
     try {
@@ -456,7 +480,7 @@ export class PlanningCalendar implements OnInit {
           .map((d) => ({ start: d.startTime, end: d.endTime })),
       }),
     };
-    return firstValueFrom(this.dialog.open<DayDialog, DayDialogData, DayDialogResult>(DayDialog, { data }).afterClosed());
+    return openDialog<DayDialog, DayDialogData, DayDialogResult>(this.dialogs, DayDialog, data);
   }
 
   private async change(call: () => Promise<unknown>, success: string): Promise<void> {
@@ -584,6 +608,6 @@ export class PlanningCalendar implements OnInit {
   }
 
   private notify(message: string): void {
-    this.snack.open(message, 'OK', { duration: 5000 });
+    this.toast.show(message, { duration: 5000 });
   }
 }

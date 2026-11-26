@@ -1,12 +1,19 @@
 import { ChangeDetectionStrategy, Component, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
-import { MatListModule } from '@angular/material/list';
-import { MatSidenavModule } from '@angular/material/sidenav';
-import { MatToolbarModule } from '@angular/material/toolbar';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { NgIcon, provideIcons } from '@ng-icons/core';
+import {
+  lucideCalendarCog,
+  lucideCalendarDays,
+  lucideClipboardCheck,
+  lucideClipboardList,
+  lucideLogOut,
+} from '@ng-icons/lucide';
 import { filter, map } from 'rxjs';
+import { ZardBadgeComponent } from '@/shared/components/badge';
+import { ZardButtonComponent } from '@/shared/components/button';
+import { ZardSidebarImports } from '@/shared/components/sidebar';
+import { ZardSonnerComponent } from '@/shared/components/sonner';
 import { PeopleFilter } from '../../features/planning/people-filter';
 import { AuthService } from '../auth/auth.service';
 
@@ -21,76 +28,86 @@ const isPlanning = (url: string) => url.split(/[?#]/)[0] === '/planning';
 @Component({
   selector: 'app-shell',
   imports: [
-    MatButtonModule,
-    MatIconModule,
-    MatListModule,
-    MatSidenavModule,
-    MatToolbarModule,
+    NgIcon,
     PeopleFilter,
     RouterLink,
     RouterLinkActive,
     RouterOutlet,
+    ZardBadgeComponent,
+    ZardButtonComponent,
+    ZardSidebarImports,
+    ZardSonnerComponent,
+  ],
+  viewProviders: [
+    provideIcons({ lucideCalendarCog, lucideCalendarDays, lucideClipboardCheck, lucideClipboardList, lucideLogOut }),
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <mat-toolbar class="topbar">
-      <span class="brand">Plannings &amp; congés</span>
-      <span class="spacer"></span>
-      <span class="user">
-        {{ auth.displayName() }}
-        @if (auth.isAdmin()) {
-          <span class="badge">Admin</span>
-        }
-      </span>
-      <button mat-icon-button (click)="auth.logout()" aria-label="Se déconnecter" title="Se déconnecter">
-        <mat-icon>logout</mat-icon>
-      </button>
-    </mat-toolbar>
-    <mat-sidenav-container class="container">
-      <mat-sidenav mode="side" opened class="sidenav">
-        <mat-nav-list>
-          @for (item of mainNav; track item.path) {
-            <a mat-list-item [routerLink]="item.path" routerLinkActive #rla="routerLinkActive" [activated]="rla.isActive">
-              <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-              <span matListItemTitle>{{ item.label }}</span>
-            </a>
-          }
+    <z-sidebar-provider class="h-svh min-h-0 overflow-hidden">
+      <z-sidebar>
+        <z-sidebar-header>
+          <span class="px-2 py-1 text-base font-semibold">Plannings &amp; congés</span>
+        </z-sidebar-header>
+        <z-sidebar-content>
+          <z-sidebar-group>
+            <ul z-sidebar-menu>
+              @for (item of mainNav; track item.path) {
+                <li z-sidebar-menu-item>
+                  <a z-sidebar-menu-button [routerLink]="item.path" routerLinkActive #rla="routerLinkActive"
+                     [zActive]="rla.isActive">
+                    <ng-icon [name]="item.icon" />
+                    <span>{{ item.label }}</span>
+                  </a>
+                </li>
+              }
+            </ul>
+          </z-sidebar-group>
           @if (auth.isAdmin()) {
-            <h3 matSubheader>Administration</h3>
-            @for (item of adminNav; track item.path) {
-              <a mat-list-item [routerLink]="item.path" routerLinkActive #rla="routerLinkActive" [activated]="rla.isActive">
-                <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                <span matListItemTitle>{{ item.label }}</span>
-              </a>
-            }
+            <z-sidebar-group>
+              <z-sidebar-group-label>Administration</z-sidebar-group-label>
+              <ul z-sidebar-menu>
+                @for (item of adminNav; track item.path) {
+                  <li z-sidebar-menu-item>
+                    <a z-sidebar-menu-button [routerLink]="item.path" routerLinkActive #rla="routerLinkActive"
+                       [zActive]="rla.isActive">
+                      <ng-icon [name]="item.icon" />
+                      <span>{{ item.label }}</span>
+                    </a>
+                  </li>
+                }
+              </ul>
+            </z-sidebar-group>
           }
-        </mat-nav-list>
-        @if (onPlanning()) {
-          <app-people-filter />
-        }
-      </mat-sidenav>
-      <mat-sidenav-content class="content">
-        <router-outlet />
-      </mat-sidenav-content>
-    </mat-sidenav-container>
+          @if (onPlanning()) {
+            <app-people-filter class="border-t" />
+          }
+        </z-sidebar-content>
+      </z-sidebar>
+
+      <main z-sidebar-inset class="min-h-0 overflow-hidden">
+        <header class="flex h-12 shrink-0 items-center gap-2 border-b px-3">
+          <button z-sidebar-trigger></button>
+          <span class="flex-1"></span>
+          <span class="flex items-center gap-2 text-sm">
+            {{ auth.displayName() }}
+            @if (auth.isAdmin()) {
+              <z-badge zType="secondary">Admin</z-badge>
+            }
+          </span>
+          <button z-button zType="ghost" zSize="icon" (click)="auth.logout()"
+                  aria-label="Se déconnecter" title="Se déconnecter">
+            <ng-icon name="lucideLogOut" />
+          </button>
+        </header>
+        <div class="min-h-0 flex-1 overflow-auto p-6">
+          <router-outlet />
+        </div>
+      </main>
+    </z-sidebar-provider>
+    <z-sonner position="bottom-center" />
   `,
   styles: `
-    :host { display: flex; flex-direction: column; height: 100%; }
-    .topbar { background: var(--mat-sys-primary); color: var(--mat-sys-on-primary); }
-    .topbar button { color: inherit; }
-    .spacer { flex: 1; }
-    .user { font: var(--mat-sys-body-medium); margin-right: 8px; display: flex; align-items: center; gap: 8px; }
-    .badge { font: var(--mat-sys-label-small); padding: 2px 8px; border-radius: 8px;
-      background: var(--mat-sys-tertiary-container); color: var(--mat-sys-on-tertiary-container); }
-    .container { flex: 1; }
-    .sidenav { width: 240px; }
-    /* le menu garde sa taille ; la liste des collaborateurs défile dans la place restante */
-    .sidenav ::ng-deep .mat-drawer-inner-container { display: flex; flex-direction: column; }
-    mat-nav-list { flex: none; }
-    app-people-filter { flex: 0 1 auto; border-top: 1px solid var(--mat-sys-outline-variant); }
-    /* border-box : le padding reste inclus dans la hauteur (100 %) de la zone de contenu, sinon le bas des pages
-       dépasse de l'écran et se retrouve coupé */
-    .content { padding: 24px; box-sizing: border-box; }
+    :host { display: block; height: 100%; }
   `,
 })
 export class Shell {
@@ -107,11 +124,11 @@ export class Shell {
   );
 
   protected readonly mainNav: NavItem[] = [
-    { path: '/planning', label: 'Planning', icon: 'calendar_month' },
-    { path: '/mes-demandes', label: 'Mes demandes', icon: 'assignment' },
+    { path: '/planning', label: 'Planning', icon: 'lucideCalendarDays' },
+    { path: '/mes-demandes', label: 'Mes demandes', icon: 'lucideClipboardList' },
   ];
   protected readonly adminNav: NavItem[] = [
-    { path: '/admin/validations', label: 'Validations', icon: 'fact_check' },
-    { path: '/admin/plannings', label: 'Plannings', icon: 'edit_calendar' },
+    { path: '/admin/validations', label: 'Validations', icon: 'lucideClipboardCheck' },
+    { path: '/admin/plannings', label: 'Plannings', icon: 'lucideCalendarCog' },
   ];
 }

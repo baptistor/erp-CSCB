@@ -1,4 +1,4 @@
-import { colorFor, fullName, setUserColors, tint, USER_PALETTE } from './user-color';
+import { colorFor, fullName, initials, setUserColors, tint, USER_PALETTE } from './user-color';
 
 describe('user-color', () => {
   it('12 employés = 12 couleurs, même avec des id espacés de 12 ; un nouvel arrivant ne change rien', () => {
@@ -18,5 +18,10 @@ describe('user-color', () => {
   it('affiche prénom nom, ou l’email à défaut', () => {
     expect(fullName({ firstName: 'Alice', lastName: 'Martin', email: 'a@x.fr' })).toBe('Alice Martin');
     expect(fullName({ firstName: null, lastName: null, email: 'a@x.fr' })).toBe('a@x.fr');
+  });
+
+  it('initiales du prénom et du nom, sinon de l’email', () => {
+    expect(initials({ firstName: 'Alice', lastName: 'Martin', email: 'a@x.fr' })).toBe('AM');
+    expect(initials({ firstName: null, lastName: null, email: 'bob@x.fr' })).toBe('B');
   });
 });
