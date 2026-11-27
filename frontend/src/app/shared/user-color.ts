@@ -6,6 +6,9 @@ export const USER_PALETTE = [
   '#d81b60', '#3949ab', '#6d4c41', '#7cb342', '#00acc1', '#5e35b1',
 ] as const;
 
+/** Heures sup : une seule couleur, vert fluo, identifiable par tous (spec §1). */
+export const OVERTIME_COLOR = '#39ff14';
+
 /** Rang de chaque employé par ancienneté (id croissant) : couleurs stables, toutes distinctes jusqu'à 12 personnes. */
 const ranks = signal<ReadonlyMap<number, number>>(new Map());
 

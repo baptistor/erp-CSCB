@@ -33,4 +33,13 @@ describe('semaine type (matin + après-midi)', () => {
     expect(dayMinutes({ ...day('09:00', '17:00'), afternoon: false })).toBe(210);
     expect(dayMinutes(day('09:00', '17:00', false))).toBe(0);
   });
+
+  it('semaine de vacances : une seule plage, sans pause (9h–16h = 7 h)', () => {
+    const holiday = (worked: boolean): DayValue => ({ ...day('09:00', '17:00', worked), morningEnd: '16:00' });
+    const days = [1, 2, 3, 4, 5, 6, 7].map((d) => holiday(d <= 5));
+    expect(dayError(holiday(true), true)).toBeNull();
+    expect(dayMinutes(holiday(true), true)).toBe(420);
+    expect(weekOk(days, 35, true)).toBe(true);
+    expect(dayError({ ...holiday(true), morningEnd: '08:00' }, true)).not.toBeNull();
+  });
 });

@@ -8,6 +8,7 @@ import { MatToolbarModule } from '@angular/material/toolbar';
 import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { filter, map } from 'rxjs';
 import { PeopleFilter } from '../../features/planning/people-filter';
+import { HolidayCalendarStore } from '../../shared/holiday-calendar';
 import { AuthService } from '../auth/auth.service';
 
 interface NavItem {
@@ -60,7 +61,12 @@ const isPlanning = (url: string) => url.split(/[?#]/)[0] === '/planning';
             @for (item of adminNav; track item.path) {
               <a mat-list-item [routerLink]="item.path" routerLinkActive #rla="routerLinkActive" [activated]="rla.isActive">
                 <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
-                <span matListItemTitle>{{ item.label }}</span>
+                <span matListItemTitle>
+                  {{ item.label }}
+                  @if (item.path === '/admin/plannings' && holidays.warning()) {
+                    <span class="dot" title="Calendrier des vacances scolaires à valider" aria-label="à valider"></span>
+                  }
+                </span>
               </a>
             }
           }
@@ -83,6 +89,8 @@ const isPlanning = (url: string) => url.split(/[?#]/)[0] === '/planning';
     .badge { font: var(--mat-sys-label-small); padding: 2px 8px; border-radius: 8px;
       background: var(--mat-sys-tertiary-container); color: var(--mat-sys-on-tertiary-container); }
     .container { flex: 1; }
+    .dot { display: inline-block; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; vertical-align: middle;
+      background: var(--mat-sys-error); }
     .sidenav { width: 240px; }
     /* le menu garde sa taille ; la liste des collaborateurs défile dans la place restante */
     .sidenav ::ng-deep .mat-drawer-inner-container { display: flex; flex-direction: column; }
@@ -95,6 +103,7 @@ const isPlanning = (url: string) => url.split(/[?#]/)[0] === '/planning';
 })
 export class Shell {
   protected readonly auth = inject(AuthService);
+  protected readonly holidays = inject(HolidayCalendarStore);
   private readonly router = inject(Router);
 
   /** La liste des emplois du temps affichés n'apparaît dans le menu que sur l'écran Planning. */
@@ -108,7 +117,6 @@ export class Shell {
 
   protected readonly mainNav: NavItem[] = [
     { path: '/planning', label: 'Planning', icon: 'calendar_month' },
-    { path: '/mes-demandes', label: 'Mes demandes', icon: 'assignment' },
   ];
   protected readonly adminNav: NavItem[] = [
     { path: '/admin/validations', label: 'Validations', icon: 'fact_check' },

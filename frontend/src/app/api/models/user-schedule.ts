@@ -10,9 +10,9 @@ export interface UserSchedule {
   days: Array<TypicalDay>;
 
   /**
-   * Semaine de vacances scolaires ; null = à compléter (reprend la semaine classique)
+   * Semaine de vacances scolaires (une plage par jour, sans pause ; 9h–16h du lundi au vendredi par défaut)
    */
-  holidayDays?: (Array<TypicalDay> | null);
+  holidayDays: Array<TypicalDay>;
 
   /**
    * Contrat hebdomadaire en heures (pas de 0,25, max 168) ; la semaine type doit le totaliser exactement

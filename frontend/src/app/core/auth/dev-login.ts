@@ -29,14 +29,10 @@ import { AuthService } from './auth.service';
         @if (error()) {
           <p class="error">{{ error() }}</p>
         }
-        <p class="hint">Comptes de démo :</p>
-        <div class="quick">
-          @for (demo of demoUsers; track demo) {
-            <button mat-stroked-button type="button" (click)="login(demo)" [disabled]="pending()">
-              {{ demo }}
-            </button>
-          }
-        </div>
+        <p class="hint">
+          N'importe quelle adresse du domaine autorisé : le compte est créé à la première connexion. L'admin est
+          l'adresse configurée (initialAdminEmail).
+        </p>
       </mat-card-content>
     </mat-card>
   `,
@@ -44,7 +40,6 @@ import { AuthService } from './auth.service';
     :host { display: flex; justify-content: center; padding: 48px 16px; }
     .login { width: 100%; max-width: 460px; }
     .full { width: 100%; margin-top: 16px; }
-    .quick { display: flex; flex-direction: column; gap: 8px; }
     .hint { margin-top: 24px; color: var(--mat-sys-on-surface-variant); }
     .error { color: var(--mat-sys-error); }
   `,
@@ -56,18 +51,6 @@ export class DevLogin {
   protected email = this.auth.devEmail() ?? '';
   protected readonly pending = signal(false);
   protected readonly error = signal<string | null>(null);
-  protected readonly demoUsers = [
-    'admin@exemple.fr',
-    'alice.martin@exemple.fr',
-    'bruno.durand@exemple.fr',
-    'chloe.bernard@exemple.fr',
-    'david.petit@exemple.fr',
-    'emma.robert@exemple.fr',
-    'farid.benali@exemple.fr',
-    'gaelle.moreau@exemple.fr',
-    'hugo.lefevre@exemple.fr',
-    'ines.garcia@exemple.fr',
-  ];
 
   protected async login(email: string): Promise<void> {
     this.pending.set(true);

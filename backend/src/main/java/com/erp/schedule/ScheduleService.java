@@ -1,11 +1,9 @@
 package com.erp.schedule;
 
 import java.math.BigDecimal;
-import java.time.Clock;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -26,11 +24,11 @@ import com.erp.auth.AuthenticatedUser;
 import com.erp.common.RequestStatus;
 import com.erp.leave.AbsenceRequest;
 import com.erp.leave.AbsenceRequestRepository;
+import com.erp.overtime.OvertimeRequestRepository;
 import com.erp.schedule.ScheduleDtos.PlanningAbsenceDto;
 import com.erp.schedule.ScheduleDtos.PlanningDayDto;
 import com.erp.schedule.ScheduleDtos.PlanningDto;
-import com.erp.schedule.ScheduleDtos.SpecialDayDto;
-import com.erp.schedule.ScheduleDtos.SpecialDayInput;
+import com.erp.schedule.ScheduleDtos.PlanningOvertimeDto;
 import com.erp.schedule.ScheduleDtos.TypicalDayDto;
 import com.erp.schedule.ScheduleDtos.UserScheduleDto;
 import com.erp.user.AppUser;
@@ -38,8 +36,8 @@ import com.erp.user.AppUserRepository;
 import com.erp.user.Role;
 
 /**
- * Horaires (spec §1) : planning d'un jour = journée type (matin + après-midi, selon le type de semaine) + plages
- * d'heures ajoutées, qui n'empiètent ni sur la journée type ni sur la pause de midi. (« SpecialDay » est le nom technique d'une plage ajoutée.)
+ * Horaires (spec §1) : planning d'un jour = journée type (classique : matin + après-midi ; vacances : une plage) + heures
+ * sup posées sur le planning (module overtime), qui n'empiètent ni sur la journée type ni sur la pause de midi (classique).
  */
 @Service
 public class ScheduleService {
@@ -50,11 +48,12 @@ public class ScheduleService {
 
 	private static final TimeRange DEFAULT_AFTERNOON = new TimeRange(LocalTime.of(13, 30), LocalTime.of(17, 0));
 
-	private static final DateTimeFormatter DATE_FR = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+	/** Semaine de vacances : une seule plage, sans pause. */
+	private static final TimeRange DEFAULT_HOLIDAY = new TimeRange(LocalTime.of(9, 0), LocalTime.of(16, 0));
 
 	private final TypicalDayRepository typicalDays;
 
-	private final SpecialDayRepository specialDays;
+	private final OvertimeRequestRepository overtimes;
 
 	private final AbsenceRequestRepository absences;
 
@@ -62,42 +61,47 @@ public class ScheduleService {
 
 	private final SchoolHolidayService holidays;
 
-	private final Clock clock;
-
-	public ScheduleService(TypicalDayRepository typicalDays, SpecialDayRepository specialDays,
-			AbsenceRequestRepository absences, AppUserRepository users, SchoolHolidayService holidays,
-			Clock clock) {
+	public ScheduleService(TypicalDayRepository typicalDays, OvertimeRequestRepository overtimes,
+			AbsenceRequestRepository absences, AppUserRepository users, SchoolHolidayService holidays) {
 		this.holidays = holidays;
-		this.clock = clock;
 		this.typicalDays = typicalDays;
-		this.specialDays = specialDays;
+		this.overtimes = overtimes;
 		this.absences = absences;
 		this.users = users;
 	}
 
 	// ---------- semaine type ----------
 
-	/** Semaine par défaut d'un nouvel employé : lundi → vendredi 9h–12h30 / 13h30–17h (35 h), week-end non travaillé. */
+	/**
+	 * Semaines par défaut d'un nouvel employé, week-end non travaillé : classique lundi → vendredi 9h–12h30 / 13h30–17h,
+	 * vacances lundi → vendredi 9h–16h sans pause (35 h chacune).
+	 */
 	@Transactional
 	public void createDefaultWeek(Long userId) {
 		for (DayOfWeek day : DayOfWeek.values()) {
 			boolean worked = day.getValue() <= 5;
 			typicalDays.save(new TypicalDay(userId, WeekType.CLASSIC, day.getValue(),
 					worked ? DEFAULT_MORNING : TimeRange.NOT_WORKED, worked ? DEFAULT_AFTERNOON : TimeRange.NOT_WORKED));
+			typicalDays.save(new TypicalDay(userId, WeekType.HOLIDAY, day.getValue(),
+					worked ? DEFAULT_HOLIDAY : TimeRange.NOT_WORKED, TimeRange.NOT_WORKED));
 		}
+	}
+
+	/** Pause de midi ce jour-là : seulement en semaine classique (spec §1). */
+	public boolean hasBreak(LocalDate date) {
+		return holidays.weekTypeOf(date) == WeekType.CLASSIC;
 	}
 
 	@Transactional(readOnly = true)
 	public UserScheduleDto getSchedule(Long userId) {
 		AppUser user = findUser(userId);
-		List<TypicalDayDto> holidayDays = weekDtos(userId, WeekType.HOLIDAY);
 		return new UserScheduleDto(user.getWeeklyHours(), weekDtos(userId, WeekType.CLASSIC),
-				holidayDays.isEmpty() ? null : holidayDays);
+				weekDtos(userId, WeekType.HOLIDAY));
 	}
 
 	/**
 	 * Enregistre les deux semaines type et le contrat hebdomadaire ensemble : chaque semaine doit totaliser exactement le
-	 * contrat (spec §1). Seul un admin peut modifier le contrat. Semaine de vacances null = reprend la classique.
+	 * contrat (spec §1). Seul un admin peut modifier le contrat.
 	 */
 	@Transactional
 	public UserScheduleDto updateSchedule(AuthenticatedUser actor, Long userId, UserScheduleDto input) {
@@ -108,16 +112,9 @@ public class ScheduleService {
 			throw forbidden("Seul un admin peut modifier le contrat hebdomadaire");
 		}
 		validateWeek(WeekType.CLASSIC, input.days(), contract);
-		if (input.holidayDays() != null) {
-			validateWeek(WeekType.HOLIDAY, input.holidayDays(), contract);
-		}
+		validateWeek(WeekType.HOLIDAY, input.holidayDays(), contract);
 		saveWeek(userId, WeekType.CLASSIC, input.days());
-		if (input.holidayDays() != null) {
-			saveWeek(userId, WeekType.HOLIDAY, input.holidayDays());
-		}
-		else {
-			typicalDays.deleteAll(typicalDays.findByUserIdAndWeekTypeOrderByDayOfWeek(userId, WeekType.HOLIDAY));
-		}
+		saveWeek(userId, WeekType.HOLIDAY, input.holidayDays());
 		user.setWeeklyHours(contract);
 		return getSchedule(userId);
 	}
@@ -144,6 +141,19 @@ public class ScheduleService {
 			String label = dayLabel(DayOfWeek.of(day.dayOfWeek()));
 			TimeRange morning = morning(day);
 			TimeRange afternoon = afternoon(day);
+			if (day.dayOfWeek() == DayOfWeek.SUNDAY.getValue() && (morning.worked() || afternoon.worked())) {
+				errors.add("Dimanche : le centre est fermé");
+				continue;
+			}
+			if (type == WeekType.HOLIDAY) {
+				// vacances : une seule plage, sans pause
+				checkRange(label, morning).ifPresent(errors::add);
+				if (afternoon.worked()) {
+					errors.add(label + " : une seule plage par jour en semaine de vacances (pas de pause)");
+				}
+				total += morning.minutes();
+				continue;
+			}
 			checkRange(label + " matin", morning).ifPresent(errors::add);
 			checkRange(label + " après-midi", afternoon).ifPresent(errors::add);
 			if (morning.worked() && morning.end().isAfter(TimeRange.BREAK.start())) {
@@ -178,43 +188,15 @@ public class ScheduleService {
 		}
 	}
 
-	// ---------- heures ajoutées à un jour ----------
-
-	@Transactional
-	public SpecialDayDto createSpecialDay(AuthenticatedUser actor, SpecialDayInput input) {
-		checkCanEditDay(actor, input.userId(), input.date());
-		TimeRange range = validateExtra(input, null);
-		return SpecialDayDto.of(specialDays.save(new SpecialDay(input.userId(), input.date(), range)));
-	}
-
-	@Transactional
-	public SpecialDayDto updateSpecialDay(AuthenticatedUser actor, Long id, SpecialDayInput input) {
-		SpecialDay day = findExtra(id);
-		checkCanEditDay(actor, day.getUserId(), day.getDayDate()); // la journée actuelle…
-		checkCanEditDay(actor, input.userId(), input.date()); // …et la nouvelle
-		day.update(input.userId(), input.date(), validateExtra(input, id));
-		return SpecialDayDto.of(day);
-	}
-
-	@Transactional
-	public void deleteSpecialDay(AuthenticatedUser actor, Long id) {
-		SpecialDay day = findExtra(id);
-		checkCanEditDay(actor, day.getUserId(), day.getDayDate());
-		specialDays.delete(day);
-	}
-
 	// ---------- planning calculé ----------
 
 	/**
-	 * Plages prévues d'un employé à une date : journée type + heures ajoutées, fusionnées si contiguës. Vide = non
-	 * travaillé.
+	 * Plages prévues d'un employé à une date : sa journée type (matin, après-midi), selon le type de semaine. Vide = non
+	 * travaillé. Les heures sup n'en font pas partie (on n'y pose pas d'absence).
 	 */
 	@Transactional(readOnly = true)
 	public List<TimeRange> plannedRanges(Long userId, LocalDate date) {
-		List<TimeRange> ranges = new ArrayList<>(typicalRanges(userId, date));
-		specialDays.findByUserIdAndDayDate(userId, date).forEach(extra -> ranges.add(extra.range()));
-		// la pause n'est jamais travaillée : aucune plage ne la touche, les plages ne fusionnent donc pas à travers elle
-		return TimeRange.merge(ranges);
+		return typicalRanges(userId, date);
 	}
 
 	@Transactional(readOnly = true)
@@ -232,26 +214,15 @@ public class ScheduleService {
 			.stream()
 			.filter(monday -> !monday.isBefore(firstMonday) && monday.isBefore(to))
 			.toList();
-		Map<String, List<SpecialDay>> extras = specialDays.findByDayDateGreaterThanEqualAndDayDateLessThan(from, to)
-			.stream()
-			.sorted(Comparator.comparing(extra -> extra.range().start()))
-			.collect(Collectors.groupingBy(extra -> extra.getUserId() + "|" + extra.getDayDate()));
-
 		List<PlanningDayDto> days = new ArrayList<>();
 		for (AppUser user : users.findAll()) {
 			var classic = weeks.getOrDefault(user.getId() + "|" + WeekType.CLASSIC, Map.of());
-			var holiday = weeks.getOrDefault(user.getId() + "|" + WeekType.HOLIDAY, classic);
+			var holiday = weeks.getOrDefault(user.getId() + "|" + WeekType.HOLIDAY, Map.<Integer, List<TimeRange>>of());
 			for (LocalDate date = from; date.isBefore(to); date = date.plusDays(1)) {
 				var week = holidayWeeks.contains(SchoolHolidayService.monday(date)) ? holiday : classic;
 				List<TimeRange> typical = week.getOrDefault(date.getDayOfWeek().getValue(), List.of());
 				for (TimeRange range : typical) {
-					days.add(new PlanningDayDto(user.getId(), date, range.start(), range.end(), null));
-				}
-				for (SpecialDay extra : extras.getOrDefault(user.getId() + "|" + date, List.of())) {
-					// la semaine type a pu changer depuis l'ajout : on n'affiche que ce qui n'empiète pas dessus
-					for (TimeRange part : extra.range().outside(typical)) {
-						days.add(new PlanningDayDto(user.getId(), date, part.start(), part.end(), extra.getId()));
-					}
+					days.add(new PlanningDayDto(user.getId(), date, range.start(), range.end()));
 				}
 			}
 		}
@@ -262,7 +233,13 @@ public class ScheduleService {
 			.map(a -> new PlanningAbsenceDto(a.getId(), a.getUserId(), a.getStartDate(), a.getEndDate(),
 					a.getStartTime(), a.getEndTime(), a.getStatus()))
 			.toList();
-		return new PlanningDto(days, absenceDtos, holidayWeeks);
+		// heures sup en attente et acceptées de tous, sans motif (spec §2)
+		var overtimeDtos = overtimes.findPlaced(List.of(RequestStatus.PENDING, RequestStatus.APPROVED), from, to)
+			.stream()
+			.map(o -> new PlanningOvertimeDto(o.getId(), o.getUserId(), o.getWorkDate(), o.getStartTime(),
+					o.getEndTime(), o.getStatus(), o.getCreatedBy()))
+			.toList();
+		return new PlanningDto(days, overtimeDtos, absenceDtos, holidayWeeks);
 	}
 
 	// ---------- droits (spec §1 : l'ADMIN modifie tout, l'EMPLOYEE ses propres journées) ----------
@@ -277,55 +254,12 @@ public class ScheduleService {
 		}
 	}
 
-	/** Employé : uniquement ses journées, à partir d'aujourd'hui. */
-	private void checkCanEditDay(AuthenticatedUser actor, Long userId, LocalDate date) {
-		checkOwner(actor, userId);
-		if (!isAdmin(actor) && date.isBefore(LocalDate.now(clock))) {
-			throw badRequest("Les jours passés ne sont plus modifiables");
-		}
-	}
-
 	// ---------- règles ----------
 
-	/**
-	 * Heures ajoutées (spec §1) : fin > début, sans empiéter sur la journée type ni sur d'autres heures ajoutées. L'employé
-	 * est verrouillé pour que deux ajouts simultanés ne se chevauchent pas.
-	 */
-	private TimeRange validateExtra(SpecialDayInput input, Long ignoredId) {
-		users.lockById(input.userId()).orElseThrow(() -> notFound("Employé introuvable"));
-		TimeRange range = new TimeRange(input.startTime(), input.endTime());
-		checkRange("Le " + input.date().format(DATE_FR), range).ifPresent(error -> {
-			throw badRequest(error);
-		});
-		if (range.overlaps(TimeRange.BREAK)) {
-			throw badRequest("Les heures ajoutées ne doivent pas empiéter sur la pause de midi (12:30–13:30)");
-		}
-		for (TimeRange typical : typicalRanges(input.userId(), input.date())) {
-			if (range.overlaps(typical)) {
-				throw badRequest("Les heures ajoutées ne doivent pas empiéter sur la journée type du "
-						+ input.date().format(DATE_FR) + " (" + typical.start() + "–" + typical.end() + ")");
-			}
-		}
-		for (SpecialDay other : specialDays.findByUserIdAndDayDate(input.userId(), input.date())) {
-			if (!other.getId().equals(ignoredId) && range.overlaps(other.range())) {
-				throw new ResponseStatusException(HttpStatus.CONFLICT, "Ces heures chevauchent des heures déjà ajoutées ("
-						+ other.range().start() + "–" + other.range().end() + ")");
-			}
-		}
-		return range;
-	}
-
-	private SpecialDay findExtra(Long id) {
-		return specialDays.findById(id).orElseThrow(() -> notFound("Heures ajoutées introuvables"));
-	}
-
-	/** Journée type à une date, selon le type de semaine (vacances non renseignées = semaine classique). */
-	private List<TimeRange> typicalRanges(Long userId, LocalDate date) {
-		List<TypicalDay> week = typicalDays.findByUserIdAndWeekTypeOrderByDayOfWeek(userId, holidays.weekTypeOf(date));
-		if (week.isEmpty()) {
-			week = typicalDays.findByUserIdAndWeekTypeOrderByDayOfWeek(userId, WeekType.CLASSIC);
-		}
-		return week.stream()
+	/** Journée type à une date, selon le type de semaine. */
+	public List<TimeRange> typicalRanges(Long userId, LocalDate date) {
+		return typicalDays.findByUserIdAndWeekTypeOrderByDayOfWeek(userId, holidays.weekTypeOf(date))
+			.stream()
 			.filter(day -> day.getDayOfWeek() == date.getDayOfWeek().getValue())
 			.flatMap(day -> day.ranges().stream())
 			.toList();
@@ -359,8 +293,8 @@ public class ScheduleService {
 			return Optional.of(summary + "il manque " + formatMinutes(contractMinutes - totalMinutes));
 		}
 		return Optional.of(summary + formatMinutes(totalMinutes - contractMinutes) + " de trop : la semaine type doit "
-				+ "rester au contrat ; ajoutez les heures en plus sur le planning (jour concerné) puis faites une "
-				+ "déclaration d'heures supplémentaires");
+				+ "rester au contrat ; posez les heures en plus sur le planning, au jour concerné : "
+				+ "elles deviennent une demande d'heures supplémentaires");
 	}
 
 	private static BigDecimal validateWeeklyHours(BigDecimal hours) {

@@ -3,6 +3,7 @@
 
 import { PlanningAbsence } from '../models/planning-absence';
 import { PlanningDay } from '../models/planning-day';
+import { PlanningOvertime } from '../models/planning-overtime';
 export interface Planning {
   absences: Array<PlanningAbsence>;
   days: Array<PlanningDay>;
@@ -11,4 +12,5 @@ export interface Planning {
    * Lundis des semaines de vacances scolaires touchant la période
    */
   holidayWeeks: Array<string>;
+  overtimes: Array<PlanningOvertime>;
 }

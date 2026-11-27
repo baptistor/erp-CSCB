@@ -15,7 +15,6 @@ import com.erp.auth.AuthenticatedUser;
 import com.erp.leave.LeaveDtos.AbsenceInput;
 import com.erp.leave.LeaveDtos.AbsenceRequestDto;
 import com.erp.leave.LeaveDtos.BalanceDto;
-import com.erp.leave.LeaveDtos.RequestsDto;
 import com.erp.overtime.OvertimeDtos.OvertimeInput;
 import com.erp.overtime.OvertimeDtos.OvertimeRequestDto;
 import com.erp.overtime.OvertimeService;
@@ -39,16 +38,11 @@ public class MyRequestsController {
 		this.balances = balances;
 	}
 
-	@GetMapping("/requests")
-	@PreAuthorize("isAuthenticated()")
-	public RequestsDto requests(@AuthenticationPrincipal AuthenticatedUser me) {
-		return new RequestsDto(overtimes.mine(me.id()), absences.mine(me.id()));
-	}
-
 	@GetMapping("/balance")
 	@PreAuthorize("isAuthenticated()")
 	public BalanceDto balance(@AuthenticationPrincipal AuthenticatedUser me) {
-		return balances.details(me.id());
+		// spec : l'historique des mouvements est réservé à l'admin ; l'employé ne voit que son solde et son disponible
+		return balances.summary(me.id());
 	}
 
 	@PostMapping("/overtime-requests")

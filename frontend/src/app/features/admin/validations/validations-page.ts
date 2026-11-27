@@ -23,12 +23,13 @@ import { DecisionDialog, DecisionDialogData } from './decision-dialog';
       <h2>Heures supplémentaires ({{ p.overtimes.length }})</h2>
       @if (p.overtimes.length) {
         <table>
-          <thead><tr><th>Employé</th><th>Date</th><th class="num">Heures</th><th>Motif</th><th>Demandée le</th><th></th></tr></thead>
+          <thead><tr><th>Employé</th><th>Date</th><th>Plage</th><th class="num">Heures</th><th>Motif</th><th>Demandée le</th><th></th></tr></thead>
           <tbody>
             @for (o of p.overtimes; track o.id) {
               <tr>
                 <td>{{ name(o.userId) }}</td>
                 <td>{{ o.date | date: 'dd/MM/yyyy' }}</td>
+                <td>{{ o.startTime }}–{{ o.endTime }}</td>
                 <td class="num">{{ hours(o.hours) }}</td>
                 <td>{{ o.reason }}</td>
                 <td>{{ o.createdAt | date: 'dd/MM/yyyy HH:mm' }}</td>
@@ -112,7 +113,7 @@ export class ValidationsPage {
   }
 
   protected async decideOvertime(o: OvertimeRequest, approved: boolean): Promise<void> {
-    const summary = `${this.name(o.userId)} — ${formatHours(o.hours)} d'heures sup le ${o.date.split('-').reverse().join('/')}`;
+    const summary = `${this.name(o.userId)} — ${formatHours(o.hours)} d'heures sup le ${o.date.split('-').reverse().join('/')} de ${o.startTime} à ${o.endTime}`;
     const result = await this.confirm(approved, summary);
     if (result) {
       await this.run(() => this.api.invoke(decideOvertime, { id: o.id, body: { approved, comment: result.comment } }), approved);

@@ -28,7 +28,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import com.erp.TestcontainersConfiguration;
 import com.erp.common.TimeConfig;
 
-/** Journées types, contrat hebdomadaire, heures ajoutées et planning calculé (spec §1). */
+/** Journées types, contrat hebdomadaire, heures sup au planning et planning calculé (spec §1). */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("dev")
@@ -59,17 +59,27 @@ class ScheduleControllerTest {
 	long aliceId;
 
 	@BeforeEach
-	void setUp() {
-		jdbc.update("delete from special_day");
+	void setUp() throws Exception {
+		// comptes créés au premier login (pas de données de démo en base)
+		for (String user : java.util.List.of(ADMIN, EMPLOYEE)) {
+			mvc.perform(get("/api/me").header("X-Dev-User", user)).andExpect(status().isOk());
+		}
+		jdbc.update("delete from overtime_request");
 		jdbc.update("delete from absence_request");
 		jdbc.update("update app_user set weekly_hours = 35");
 		jdbc.update("delete from school_holiday_week");
-		jdbc.update("delete from typical_day where week_type = 'HOLIDAY'");
+		jdbc.update("update school_holiday_calendar set validated_until = null, validated_by = null, validated_at = null");
+		jdbc.update("""
+				update typical_day set morning_start = case when day_of_week <= 5 then time '09:00' end,
+				                       morning_end   = case when day_of_week <= 5 then time '16:00' end,
+				                       afternoon_start = null, afternoon_end = null
+				where week_type = 'HOLIDAY'""");
 		jdbc.update("""
 				update typical_day set morning_start   = case when day_of_week <= 5 then time '09:00' end,
 				                       morning_end     = case when day_of_week <= 5 then time '12:30' end,
 				                       afternoon_start = case when day_of_week <= 5 then time '13:30' end,
-				                       afternoon_end   = case when day_of_week <= 5 then time '17:00' end""");
+				                       afternoon_end   = case when day_of_week <= 5 then time '17:00' end
+				where week_type = 'CLASSIC'""");
 		aliceId = jdbc.queryForObject("select id from app_user where email = ?", Long.class, EMPLOYEE);
 	}
 
@@ -82,8 +92,6 @@ class ScheduleControllerTest {
 		mvc.perform(get("/api/users/" + aliceId + "/schedule")).andExpect(status().isUnauthorized());
 		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), week("35", "09:00", "17:00")))
 			.andExpect(status().isUnauthorized());
-		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "18:00", "20:00")))
-			.andExpect(status().isUnauthorized());
 	}
 
 	@Test
@@ -95,55 +103,6 @@ class ScheduleControllerTest {
 	}
 
 	// ---------- employé : ses propres journées uniquement ----------
-
-	@Test
-	void employee_gereSesPropresHeuresAjoutees() throws Exception {
-		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "18:00", "20:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isCreated());
-		long id = jdbc.queryForObject("select id from special_day", Long.class);
-		mvc.perform(json(put("/api/special-days/" + id), special(aliceId, "2027-03-03", "18:30", "20:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isOk());
-		mvc.perform(delete("/api/special-days/" + id).header("X-Dev-User", EMPLOYEE))
-			.andExpect(status().isNoContent());
-	}
-
-	@Test
-	void employee_heuresAjouteesDUnAutre_403() throws Exception {
-		long adminId = adminId();
-		mvc.perform(json(post("/api/special-days"), special(adminId, "2027-03-03", "18:00", "20:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isForbidden());
-
-		long adminDay = insertSpecial(adminId, "2027-03-03", "18:00", "20:00");
-		mvc.perform(json(put("/api/special-days/" + adminDay), special(adminId, "2027-03-03", "18:00", "21:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isForbidden());
-		// ni en s'attribuant la journée d'un autre
-		mvc.perform(json(put("/api/special-days/" + adminDay), special(aliceId, "2027-03-03", "18:00", "21:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isForbidden());
-		mvc.perform(delete("/api/special-days/" + adminDay).header("X-Dev-User", EMPLOYEE))
-			.andExpect(status().isForbidden());
-		// ni en attribuant sa journée à un autre
-		long own = insertSpecial(aliceId, "2027-03-04", "18:00", "20:00");
-		mvc.perform(json(put("/api/special-days/" + own), special(adminId, "2027-03-04", "18:00", "20:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isForbidden());
-	}
-
-	@Test
-	void employee_jourPasse_400_maisAdminOk() throws Exception {
-		mvc.perform(json(post("/api/special-days"), special(aliceId, "2020-01-06", "18:00", "20:00"))
-			.header("X-Dev-User", EMPLOYEE))
-			.andExpect(status().isBadRequest())
-			.andExpect(jsonPath("$.detail").value("Les jours passés ne sont plus modifiables"));
-		long past = insertSpecial(aliceId, "2020-01-07", "18:00", "20:00");
-		mvc.perform(delete("/api/special-days/" + past).header("X-Dev-User", EMPLOYEE))
-			.andExpect(status().isBadRequest());
-		// déplacer une journée future vers le passé : refusé aussi
-		long future = insertSpecial(aliceId, "2027-03-04", "18:00", "20:00");
-		mvc.perform(json(put("/api/special-days/" + future), special(aliceId, "2020-01-08", "18:00", "20:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isBadRequest());
-
-		mvc.perform(json(post("/api/special-days"), special(aliceId, "2020-01-06", "18:00", "20:00"))
-			.header("X-Dev-User", ADMIN)).andExpect(status().isCreated());
-	}
 
 	@Test
 	void employee_semaineDoitResterAuContrat() throws Exception {
@@ -192,7 +151,23 @@ class ScheduleControllerTest {
 			.andExpect(jsonPath("$.days[0].morningStart").value("09:00"))
 			.andExpect(jsonPath("$.days[4].afternoonEnd").value("17:00"))
 			.andExpect(jsonPath("$.days[5].morningStart").doesNotExist())
-			.andExpect(jsonPath("$.days[6].afternoonStart").doesNotExist());
+			.andExpect(jsonPath("$.days[6].afternoonStart").doesNotExist())
+			// vacances : 9h–16h sans pause, du lundi au vendredi
+			.andExpect(jsonPath("$.holidayDays[0].morningStart").value("09:00"))
+			.andExpect(jsonPath("$.holidayDays[0].morningEnd").value("16:00"))
+			.andExpect(jsonPath("$.holidayDays[0].afternoonStart").doesNotExist())
+			.andExpect(jsonPath("$.holidayDays[5].morningStart").doesNotExist());
+	}
+
+	@Test
+	void dimanche_ferme_400() throws Exception {
+		String sunday = days("09:00", "16:00").replace(day(7, null, null), day(7, "09:00", "12:00"));
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), weeks(sunday, holidayDays("09:00", "16:00")))
+			.header("X-Dev-User", ADMIN))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("Dimanche : le centre est fermé")));
+		overtime("2027-01-10", "09:00", "10:00").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("Le centre est fermé le dimanche"));
 	}
 
 	@Test
@@ -219,9 +194,9 @@ class ScheduleControllerTest {
 				ADMIN))
 			.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail", containsString("40 h pour un contrat de 35 h — 5 h de trop")))
-			.andExpect(jsonPath("$.detail", containsString("déclaration d'heures supplémentaires")));
+			.andExpect(jsonPath("$.detail", containsString("demande d'heures supplémentaires")));
 		// rien n'a été enregistré
-		assertThat(jdbc.queryForObject("select afternoon_end::text from typical_day where user_id = ? and day_of_week = 1",
+		assertThat(jdbc.queryForObject("select afternoon_end::text from typical_day where user_id = ? and day_of_week = 1 and week_type = 'CLASSIC'",
 				String.class, aliceId)).isEqualTo("17:00:00");
 	}
 
@@ -240,62 +215,6 @@ class ScheduleControllerTest {
 			.header("X-Dev-User", ADMIN)).andExpect(status().isBadRequest());
 	}
 
-	// ---------- heures ajoutées à un jour (journée type : 9h–12h30 / 13h30–17h) ----------
-
-	@Test
-	void heuresAjoutees_avantApres_avecCoupure_etJourNonTravaille() throws Exception {
-		add("2027-03-03", "07:00", "09:00").andExpect(status().isCreated()); // collée avant
-		add("2027-03-03", "17:00", "18:00").andExpect(status().isCreated()); // collée après
-		add("2027-03-03", "19:00", "20:00").andExpect(status().isCreated()); // coupure
-		add("2027-03-06", "10:00", "12:00").andExpect(status().isCreated()); // samedi
-	}
-
-	@Test
-	void heuresAjoutees_nEmpietentJamaisSurLaJourneeType_400() throws Exception {
-		for (String[] r : new String[][] { { "16:00", "18:00" }, { "08:00", "10:00" }, { "10:00", "12:00" },
-				{ "13:30", "17:00" } }) {
-			add("2027-03-03", r[0], r[1]).andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.detail", containsString("ne doivent pas empiéter sur la journée type")));
-			// même règle pour l'admin
-			mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", r[0], r[1])).header("X-Dev-User",
-					ADMIN))
-				.andExpect(status().isBadRequest());
-		}
-		long id = insertSpecial("2027-03-03", "18:00", "20:00");
-		mvc.perform(json(put("/api/special-days/" + id), special(aliceId, "2027-03-03", "16:00", "20:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isBadRequest());
-		assertThat(jdbc.queryForObject("select count(*) from special_day", Long.class)).isEqualTo(1);
-	}
-
-	@Test
-	void heuresAjoutees_neSeChevauchentPas_409() throws Exception {
-		long id = insertSpecial("2027-03-03", "18:00", "20:00");
-		add("2027-03-03", "19:00", "21:00").andExpect(status().isConflict());
-		// modifier la plage elle-même reste possible
-		mvc.perform(json(put("/api/special-days/" + id), special(aliceId, "2027-03-03", "18:30", "20:00"))
-			.header("X-Dev-User", EMPLOYEE)).andExpect(status().isOk());
-	}
-
-	@Test
-	void heuresAjoutees_invalides() throws Exception {
-		add("2027-03-03", "20:00", "18:00").andExpect(status().isBadRequest());
-		add("2027-03-03", "18:00", null).andExpect(status().isBadRequest());
-		add("2027-03-03", null, null).andExpect(status().isBadRequest()); // plus de « non travaillé »
-		mvc.perform(json(post("/api/special-days"), special(999_999, "2027-03-03", "18:00", "19:00"))
-			.header("X-Dev-User", ADMIN)).andExpect(status().isNotFound());
-		mvc.perform(delete("/api/special-days/999999").header("X-Dev-User", ADMIN)).andExpect(status().isNotFound());
-	}
-
-	@Test
-	void admin_ajouteModifieRetirePourUnEmploye() throws Exception {
-		mvc.perform(json(post("/api/special-days"), special(aliceId, "2027-03-03", "18:00", "20:00"))
-			.header("X-Dev-User", ADMIN)).andExpect(status().isCreated()).andExpect(jsonPath("$.startTime").value("18:00"));
-		long id = jdbc.queryForObject("select id from special_day", Long.class);
-		mvc.perform(json(put("/api/special-days/" + id), special(aliceId, "2027-03-03", "18:00", "21:00"))
-			.header("X-Dev-User", ADMIN)).andExpect(status().isOk());
-		mvc.perform(delete("/api/special-days/" + id).header("X-Dev-User", ADMIN)).andExpect(status().isNoContent());
-	}
-
 	// ---------- pause de midi (12h30–13h30) ----------
 
 	@Test
@@ -303,21 +222,10 @@ class ScheduleControllerTest {
 		String ok = days("09:00", "17:00");
 		for (String bad : new String[] { ok.replaceFirst("12:30", "12:45"), ok.replaceFirst("13:30", "13:15") }) {
 			mvc.perform(json(put("/api/users/" + aliceId + "/schedule"),
-					"{\"weeklyHours\": 35, \"days\": [" + bad + "]}").header("X-Dev-User", ADMIN))
+					weeks(bad, holidayDays("09:00", "16:00"))).header("X-Dev-User", ADMIN))
 				.andExpect(status().isBadRequest())
 				.andExpect(jsonPath("$.detail", containsString("pause de midi obligatoire")));
 		}
-	}
-
-	@Test
-	void pause_interditeAuxHeuresAjoutees_memeUnJourNonTravaille_400() throws Exception {
-		for (String[] r : new String[][] { { "12:30", "13:30" }, { "12:00", "12:45" }, { "13:00", "14:00" },
-				{ "10:00", "16:00" } }) {
-			add("2027-03-06", r[0], r[1]).andExpect(status().isBadRequest())
-				.andExpect(jsonPath("$.detail", containsString("pause de midi")));
-		}
-		add("2027-03-06", "10:00", "12:30").andExpect(status().isCreated());
-		add("2027-03-06", "13:30", "16:00").andExpect(status().isCreated());
 	}
 
 	// ---------- semaines de vacances scolaires ----------
@@ -341,6 +249,56 @@ class ScheduleControllerTest {
 			.andExpect(jsonPath("$").isEmpty());
 	}
 
+	// ---------- validation du calendrier des vacances ----------
+
+	private ResultActions validateCalendar(String user, String until) throws Exception {
+		MockHttpServletRequestBuilder req = put("/api/school-holiday-calendar").contentType(MediaType.APPLICATION_JSON)
+			.content("{\"validatedUntil\":\"" + until + "\"}");
+		return mvc.perform(user == null ? req : req.header("X-Dev-User", user));
+	}
+
+	@Test
+	void calendrierVacances_reserveAuxAdmins() throws Exception {
+		mvc.perform(get("/api/school-holiday-calendar")).andExpect(status().isUnauthorized());
+		mvc.perform(get("/api/school-holiday-calendar").header("X-Dev-User", EMPLOYEE)).andExpect(status().isForbidden());
+		validateCalendar(null, "2027-08-31").andExpect(status().isUnauthorized());
+		validateCalendar(EMPLOYEE, "2027-08-31").andExpect(status().isForbidden());
+	}
+
+	@Test
+	void calendrierVacances_enRetardTantQueNonValideA6Mois() throws Exception {
+		long adminId = jdbc.queryForObject("select id from app_user where email = ?", Long.class, ADMIN);
+		// jamais validé : en retard, à valider jusqu'au 1er juillet 2027 (aujourd'hui + 6 mois)
+		mvc.perform(get("/api/school-holiday-calendar").header("X-Dev-User", ADMIN))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.validatedUntil").isEmpty())
+			.andExpect(jsonPath("$.requiredUntil").value("2027-07-01"))
+			.andExpect(jsonPath("$.late").value(true));
+		// validé trop court : toujours en retard
+		validateCalendar(ADMIN, "2027-05-31").andExpect(status().isOk())
+			.andExpect(jsonPath("$.validatedUntil").value("2027-05-31"))
+			.andExpect(jsonPath("$.validatedBy").value(adminId))
+			.andExpect(jsonPath("$.validatedAt").value("2027-01-01T09:00:00Z"))
+			.andExpect(jsonPath("$.late").value(true));
+		// 6 mois atteints : plus en retard
+		validateCalendar(ADMIN, "2027-07-01").andExpect(status().isOk()).andExpect(jsonPath("$.late").value(false));
+		mvc.perform(get("/api/school-holiday-calendar").header("X-Dev-User", ADMIN))
+			.andExpect(jsonPath("$.validatedUntil").value("2027-07-01"))
+			.andExpect(jsonPath("$.late").value(false));
+	}
+
+	@Test
+	void calendrierVacances_dateInvalide_400() throws Exception {
+		validateCalendar(ADMIN, "2026-12-31").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value(containsString("passé")));
+		validateCalendar(ADMIN, "2028-01-02").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value(containsString("1 an")));
+		validateCalendar(ADMIN, "2027-09-30").andExpect(status().isOk());
+		validateCalendar(ADMIN, "2027-08-31").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value(containsString("30 septembre 2027")));
+		validateCalendar(ADMIN, "2027-09-30").andExpect(status().isOk()); // même date : accepté
+	}
+
 	@Test
 	void vacances_uniquementUnLundiAVenir_400() throws Exception {
 		// mardi, semaine en cours (aujourd'hui = vendredi 1er janvier 2027), passé
@@ -353,45 +311,60 @@ class ScheduleControllerTest {
 	}
 
 	@Test
-	void vacances_planningUtiliseLaSemaineDeVacances_sinonLaClassique() throws Exception {
+	void vacances_planningUtiliseLaSemaineDeVacances() throws Exception {
 		mvc.perform(put("/api/school-holiday-weeks/" + MONDAY).header("X-Dev-User", ADMIN));
-		// semaine de vacances pas encore remplie : reprend la classique
+		// semaine de vacances par défaut : 9h–16h sans pause
 		planningOfMonday().andExpect(jsonPath("$.holidayWeeks", contains(MONDAY)))
-			.andExpect(jsonPath(aliceOn(MONDAY) + ".startTime", contains("09:00", "13:30")));
+			.andExpect(jsonPath(aliceOn(MONDAY) + ".startTime", contains("09:00")))
+			.andExpect(jsonPath(aliceOn(MONDAY) + ".endTime", contains("16:00")));
 
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), weeks(days("09:00", "17:00"), days("08:00", "16:00")))
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), weeks(days("09:00", "17:00"), holidayDays("08:00", "15:00")))
 			.header("X-Dev-User", EMPLOYEE))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.days[0].morningStart").value("09:00"))
-			.andExpect(jsonPath("$.holidayDays[0].morningStart").value("08:00"));
-		planningOfMonday().andExpect(jsonPath(aliceOn(MONDAY) + ".startTime", contains("08:00", "13:30")))
-			.andExpect(jsonPath(aliceOn(MONDAY) + ".endTime", contains("12:30", "16:00")))
+			.andExpect(jsonPath("$.holidayDays[0].morningStart").value("08:00"))
+			.andExpect(jsonPath("$.holidayDays[0].morningEnd").value("15:00"));
+		// vacances : une seule plage, sans pause
+		planningOfMonday().andExpect(jsonPath(aliceOn(MONDAY) + ".startTime", contains("08:00")))
+			.andExpect(jsonPath(aliceOn(MONDAY) + ".endTime", contains("15:00")))
 			// la semaine suivante reste classique
 			.andExpect(jsonPath(aliceOn("2027-03-08") + ".startTime", contains("09:00", "13:30")));
-		// les heures ajoutées se comparent à la journée de vacances
-		add(MONDAY, "08:00", "09:00").andExpect(status().isBadRequest());
-		add(MONDAY, "16:00", "17:00").andExpect(status().isCreated());
+		// les heures sup se comparent à la journée de vacances
+		overtime(MONDAY, "07:00", "08:15").andExpect(status().isBadRequest());
+		overtime(MONDAY, "15:00", "16:00").andExpect(status().isCreated());
+		// pas de pause en vacances (samedi non travaillé) ; la pause reste en semaine classique
+		mvc.perform(put("/api/school-holiday-weeks/2027-02-22").header("X-Dev-User", ADMIN));
+		overtime("2027-02-27", "12:00", "14:00").andExpect(status().isCreated());
+		overtime("2027-02-20", "12:00", "14:00").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("pause de midi")));
 	}
 
 	@Test
 	void vacances_semaineHorsContrat_400_rienEnregistre() throws Exception {
-		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), weeks(days("08:00", "16:00"), days("09:00", "16:00")))
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), weeks(days("08:00", "16:00"), holidayDays("09:00", "15:00")))
 			.header("X-Dev-User", EMPLOYEE))
 			.andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail", containsString("Semaine de vacances : 30 h")));
 		mvc.perform(get("/api/users/" + aliceId + "/schedule").header("X-Dev-User", EMPLOYEE))
 			.andExpect(jsonPath("$.days[0].morningStart").value("09:00"))
-			.andExpect(jsonPath("$.holidayDays").doesNotExist());
+			.andExpect(jsonPath("$.holidayDays[0].morningEnd").value("16:00"));
+	}
+
+	@Test
+	void semaineDeVacances_obligatoire_400() throws Exception {
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), "{\"weeklyHours\": 35, \"days\": [" + days("09:00", "17:00") + "]}")
+			.header("X-Dev-User", EMPLOYEE))
+			.andExpect(status().isBadRequest());
 	}
 
 	// ---------- planning calculé ----------
 
 	@Test
-	void planning_journeeTypePlusHeuresAjoutees() throws Exception {
-		insertSpecial("2027-03-03", "18:00", "20:00");
-		insertSpecial("2027-03-03", "07:00", "08:00");
-		insertSpecial("2027-03-04", "08:00", "12:00");
-		insertSpecial("2027-03-04", "15:00", "18:00"); // la semaine type a changé depuis : seul le dépassement compte
+	void planning_journeeTypeHeuresSupEtAbsencesDeTous() throws Exception {
+		long approvedOvertime = insertOvertime("2027-03-03", "18:00", "20:00", "APPROVED");
+		long pendingOvertime = insertOvertime("2027-03-03", "07:00", "08:00", "PENDING");
+		insertOvertime("2027-03-04", "18:00", "19:00", "REJECTED");
+		insertOvertime("2027-03-04", "19:00", "20:00", "CANCELLED");
 		long approved = insertAbsence("2027-03-05", "APPROVED");
 		long pending = insertAbsence("2027-03-05", "PENDING");
 
@@ -401,9 +374,12 @@ class ScheduleControllerTest {
 				"bruno.durand@exemple.fr"))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath(alice + "2027-03-01')].startTime", contains("09:00", "13:30")))
-			.andExpect(jsonPath(alice + "2027-03-03')].startTime", contains("09:00", "13:30", "07:00", "18:00")))
-			.andExpect(jsonPath(alice + "2027-03-04')].startTime", contains("09:00", "13:30", "08:00", "17:00")))
-			.andExpect(jsonPath(alice + "2027-03-04')].endTime", contains("12:30", "17:00", "09:00", "18:00")))
+			// days = journée type seulement
+			.andExpect(jsonPath(alice + "2027-03-03')].startTime", contains("09:00", "13:30")))
+			.andExpect(jsonPath("$.overtimes[*].id", contains((int) pendingOvertime, (int) approvedOvertime)))
+			.andExpect(jsonPath("$.overtimes[0].startTime").value("07:00"))
+			.andExpect(jsonPath("$.overtimes[0].status").value("PENDING"))
+			.andExpect(jsonPath("$.overtimes[*].reason").isEmpty())
 			.andExpect(jsonPath(alice + "2027-03-06')]").isEmpty())
 			.andExpect(jsonPath("$.absences[*].id").value(hasItem((int) approved)))
 			.andExpect(jsonPath("$.absences[*].id").value(hasItem((int) pending)))
@@ -428,8 +404,10 @@ class ScheduleControllerTest {
 		return "$.days[?(@.userId == " + aliceId + " && @.date == '" + date + "')]";
 	}
 
-	private ResultActions add(String date, String start, String end) throws Exception {
-		return mvc.perform(json(post("/api/special-days"), special(aliceId, date, start, end)).header("X-Dev-User", EMPLOYEE));
+	private ResultActions overtime(String date, String start, String end) throws Exception {
+		return mvc.perform(json(post("/api/me/overtime-requests"), """
+				{"date": "%s", "startTime": "%s", "endTime": "%s", "reason": "réunion"}""".formatted(date, start, end))
+			.header("X-Dev-User", EMPLOYEE));
 	}
 
 	private static MockHttpServletRequestBuilder json(MockHttpServletRequestBuilder builder, String body) {
@@ -449,13 +427,33 @@ class ScheduleControllerTest {
 
 	/** Semaine lundi→vendredi start–12:30 / 13:30–end, week-end non travaillé. */
 	private static String week(String contract, String start, String end) {
+		// semaine de vacances de même durée : une plage sans la pause d'1 h
+		String holidayEnd = java.time.LocalTime.parse(end).minusHours(1).toString();
 		return """
-				{"weeklyHours": %s, "days": [%s]}""".formatted(contract, days(start, end));
+				{"weeklyHours": %s, "days": [%s], "holidayDays": [%s]}""".formatted(contract, days(start, end),
+				holidayDays(start, holidayEnd));
 	}
 
 	private static String weeks(String days, String holidayDays) {
 		return """
 				{"weeklyHours": 35, "days": [%s], "holidayDays": [%s]}""".formatted(days, holidayDays);
+	}
+
+	/** Semaine de vacances : lundi→vendredi une seule plage start–end, week-end non travaillé. */
+	private static String holidayDays(String start, String end) {
+		var days = java.util.stream.IntStream.rangeClosed(1, 7)
+			.mapToObj(d -> "{\"dayOfWeek\": " + d + ", \"morningStart\": " + time(d <= 5 ? start : null)
+					+ ", \"morningEnd\": " + time(d <= 5 ? end : null) + "}")
+			.toList();
+		return String.join(",", days);
+	}
+
+	@Test
+	void vacances_unePlageParJour_400() throws Exception {
+		mvc.perform(json(put("/api/users/" + aliceId + "/schedule"), weeks(days("09:00", "17:00"), days("09:00", "17:00")))
+			.header("X-Dev-User", EMPLOYEE))
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("une seule plage par jour")));
 	}
 
 	private static String days(String start, String end) {
@@ -465,20 +463,11 @@ class ScheduleControllerTest {
 		return String.join(",", days);
 	}
 
-	private static String special(long userId, String date, String start, String end) {
-		return """
-				{"userId": %d, "date": "%s", "startTime": %s, "endTime": %s}""".formatted(userId, date, time(start),
-				time(end));
-	}
-
-	private long insertSpecial(String date, String start, String end) {
-		return insertSpecial(aliceId, date, start, end);
-	}
-
-	private long insertSpecial(long userId, String date, String start, String end) {
-		return jdbc.queryForObject(
-				"insert into special_day (user_id, day_date, start_time, end_time) values (?, ?::date, ?::time, ?::time) returning id",
-				Long.class, userId, date, start, end);
+	private long insertOvertime(String date, String start, String end, String status) {
+		return jdbc.queryForObject("""
+				insert into overtime_request (user_id, work_date, start_time, end_time, hours, reason, status)
+				values (?, ?::date, ?::time, ?::time, 1, 'secret', ?) returning id""", Long.class, aliceId, date, start,
+				end, status);
 	}
 
 	private long adminId() {

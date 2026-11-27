@@ -40,45 +40,24 @@ body {
 
 // ---------- Planning, vue Mois (FullCalendar rend les événements hors des composants : styles globaux) ----------
 
-// Mes absences en attente : hachurées
-.pl-absence-pending {
-  background-image: repeating-linear-gradient(
-    45deg,
-    rgba(255, 255, 255, 0.65) 0 6px,
-    transparent 6px 12px
-  ) !important;
-  border: 1px dashed #5f6368 !important;
+// Vue Mois (lecture seule) : une ligne par employé et par jour ; la couleur résume la journée.
+// blanc = normal ; rayé gris = absence ; vert fluo = heures sup ; vert fluo rayé = les deux. Liseré = couleur de l'employé.
+.pl-day {
+  background-color: #ffffff !important;
+  color: #202124 !important;
+  border-color: var(--fc-event-color) !important;
+  border-width: 1px 1px 1px 5px !important;
+  border-style: solid !important;
+  cursor: default;
 }
-
-// Absence à la journée (vue Mois) : barrée, neutre
-.pl-absence-day {
-  background-image: repeating-linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.28) 0 3px,
-    transparent 3px 9px
-  ) !important;
-  font-weight: 600;
+.pl-day-overtime {
+  background-color: #39ff14 !important;
 }
-
-// Croix d'annulation d'une absence en attente
-.pl-cancel {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  z-index: 2;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: none;
-  border-radius: 50%;
-  background: var(--mat-sys-error);
-  color: var(--mat-sys-on-error);
-  font: 700 14px/20px sans-serif;
-  cursor: pointer;
-  pointer-events: auto;
+.pl-day * {
+  color: #202124 !important;
 }
-.pl-cancel:hover {
-  filter: brightness(1.15);
+.pl-day-absent {
+  background-image: repeating-linear-gradient(135deg, rgba(95, 99, 104, 0.4) 0 3px, transparent 3px 9px) !important;
 }
 
 // Onglets : pas de défilement interne (Material met overflow: auto sur leur contenu), c'est la page qui défile —
@@ -89,7 +68,3 @@ body {
   min-width: 0; // sans quoi un contenu large (grille du planning) élargit la page au lieu de défiler
 }
 
-// Mode Édition : la vue Mois prend aussi le fond du planning
-app-planning-calendar.editing full-calendar {
-  --fc-monarch-background: var(--planning-bg);
-}

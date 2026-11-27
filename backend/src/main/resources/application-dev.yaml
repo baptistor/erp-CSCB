@@ -10,7 +10,6 @@ spring:
     host: localhost
     port: 1025
   flyway:
-    locations: classpath:db/migration,classpath:db/dev
     placeholders:
       initialAdminEmail: admin@exemple.fr
 

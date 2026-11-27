@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -56,6 +57,9 @@ class RequestsControllerTest {
 
 	static final String PREVIOUS_SUN = "2027-01-03";
 
+	/** Samedi 2 janvier 2027, non travaillé : toute plage d'heures sup y est possible. */
+	static final String SAT_BEFORE = "2027-01-02";
+
 	static final String MON = "2027-01-04";
 
 	static final String TUE = "2027-01-05";
@@ -85,19 +89,27 @@ class RequestsControllerTest {
 	long aliceId;
 
 	@BeforeEach
-	void setUp() {
+	void setUp() throws Exception {
+		// comptes créés au premier login (pas de données de démo en base)
+		for (String user : List.of(ADMIN, ALICE, BRUNO)) {
+			mvc.perform(get("/api/me").header("X-Dev-User", user)).andExpect(status().isOk());
+		}
 		jdbc.update("delete from overtime_request");
 		jdbc.update("delete from absence_request");
 		jdbc.update("delete from balance_adjustment");
-		jdbc.update("delete from special_day");
 		jdbc.update("update app_user set weekly_hours = 35");
 		jdbc.update("delete from school_holiday_week");
-		jdbc.update("delete from typical_day where week_type = 'HOLIDAY'");
+		jdbc.update("""
+				update typical_day set morning_start = case when day_of_week <= 5 then time '09:00' end,
+				                       morning_end   = case when day_of_week <= 5 then time '16:00' end,
+				                       afternoon_start = null, afternoon_end = null
+				where week_type = 'HOLIDAY'""");
 		jdbc.update("""
 				update typical_day set morning_start   = case when day_of_week <= 5 then time '09:00' end,
 				                       morning_end     = case when day_of_week <= 5 then time '12:30' end,
 				                       afternoon_start = case when day_of_week <= 5 then time '13:30' end,
-				                       afternoon_end   = case when day_of_week <= 5 then time '18:00' end""");
+				                       afternoon_end   = case when day_of_week <= 5 then time '18:00' end
+				where week_type = 'CLASSIC'""");
 		aliceId = jdbc.queryForObject("select id from app_user where email = ?", Long.class, ALICE);
 	}
 
@@ -105,10 +117,9 @@ class RequestsControllerTest {
 
 	@Test
 	void anonyme_401() throws Exception {
-		mvc.perform(get("/api/me/requests")).andExpect(status().isUnauthorized());
 		mvc.perform(get("/api/me/balance")).andExpect(status().isUnauthorized());
 		mvc.perform(post("/api/me/overtime-requests").contentType(MediaType.APPLICATION_JSON)
-			.content(overtime("2026-11-10", "2"))).andExpect(status().isUnauthorized());
+			.content(overtime(SAT_BEFORE, "2"))).andExpect(status().isUnauthorized());
 		mvc.perform(post("/api/me/absence-requests").contentType(MediaType.APPLICATION_JSON)
 			.content(absenceBody("SANS_SOLDE", MON, MON, null, null))).andExpect(status().isUnauthorized());
 		mvc.perform(get("/api/admin/pending-requests")).andExpect(status().isUnauthorized());
@@ -116,7 +127,7 @@ class RequestsControllerTest {
 
 	@Test
 	void employee_403_surLesEndpointsAdmin() throws Exception {
-		long id = declare(ALICE, "2026-11-10", "2");
+		long id = declare(ALICE, SAT_BEFORE, "2");
 		mvc.perform(get("/api/admin/pending-requests").header("X-Dev-User", ALICE)).andExpect(status().isForbidden());
 		json(post("/api/admin/overtime-requests/" + id + "/decision"), decision(true), ALICE)
 			.andExpect(status().isForbidden());
@@ -129,7 +140,7 @@ class RequestsControllerTest {
 
 	@Test
 	void annulerLaDemandeDUnAutre_403() throws Exception {
-		long id = declare(ALICE, "2026-11-10", "2");
+		long id = declare(ALICE, SAT_BEFORE, "2");
 		mvc.perform(post("/api/me/overtime-requests/" + id + "/cancel").header("X-Dev-User", BRUNO))
 			.andExpect(status().isForbidden());
 		long absence = createdId(absence(ALICE, "SANS_SOLDE", MON, MON, null, null));
@@ -138,17 +149,16 @@ class RequestsControllerTest {
 	}
 
 	@Test
-	void mesDemandes_neContiennentQueLesMiennes() throws Exception {
-		declare(ALICE, "2026-11-10", "2");
-		declare(BRUNO, "2026-11-10", "3");
-		absence(ALICE, "SANS_SOLDE", MON, MON, "14:00", "16:00").andExpect(status().isCreated());
-		absence(BRUNO, "SANS_SOLDE", MON, MON, null, null).andExpect(status().isCreated());
-		mvc.perform(get("/api/me/requests").header("X-Dev-User", ALICE))
+	void monSolde_sansHistorique_reserveALAdmin() throws Exception {
+		long id = declare(ALICE, SAT_BEFORE, "2");
+		json(post("/api/admin/overtime-requests/" + id + "/decision"), decision(true), ADMIN).andExpect(status().isOk());
+		mvc.perform(get("/api/me/balance").header("X-Dev-User", ALICE))
 			.andExpect(status().isOk())
-			.andExpect(jsonPath("$.overtimes.length()").value(1))
-			.andExpect(jsonPath("$.overtimes[0].hours").value(2))
-			.andExpect(jsonPath("$.absences.length()").value(1))
-			.andExpect(jsonPath("$.absences[0].startTime").value("14:00"));
+			.andExpect(jsonPath("$.balance").value(2))
+			.andExpect(jsonPath("$.available").value(2))
+			.andExpect(jsonPath("$.movements").isEmpty());
+		mvc.perform(get("/api/admin/users/" + aliceId + "/balance").header("X-Dev-User", ADMIN))
+			.andExpect(jsonPath("$.movements.length()").value(1));
 	}
 
 	@Test
@@ -217,7 +227,7 @@ class RequestsControllerTest {
 
 	@Test
 	void heuresSup_approuvees_alimententLeSolde() throws Exception {
-		long id = declare(ALICE, "2026-11-10", "4");
+		long id = declare(ALICE, SAT_BEFORE, "4");
 		balance(ALICE).andExpect(jsonPath("$.balance").value(0));
 
 		json(post("/api/admin/overtime-requests/" + id + "/decision"), "{\"approved\": true, \"comment\": \"OK merci\"}",
@@ -226,23 +236,170 @@ class RequestsControllerTest {
 			.andExpect(jsonPath("$.status").value("APPROVED"))
 			.andExpect(jsonPath("$.adminComment").value("OK merci"));
 
-		balance(ALICE).andExpect(jsonPath("$.balance").value(4))
-			.andExpect(jsonPath("$.available").value(4))
-			.andExpect(jsonPath("$.movements[0].kind").value("OVERTIME"))
+		balance(ALICE).andExpect(jsonPath("$.balance").value(4)).andExpect(jsonPath("$.available").value(4));
+		history().andExpect(jsonPath("$.movements[0].kind").value("OVERTIME"))
 			.andExpect(jsonPath("$.movements[0].hours").value(4));
 	}
 
 	@Test
+	void heuresSup_plageHoraire_heuresCalculees() throws Exception {
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "10:00", "12:15"), ALICE).andExpect(status().isCreated())
+			.andExpect(jsonPath("$.hours").value(2.25))
+			.andExpect(jsonPath("$.startTime").value("10:00"))
+			.andExpect(jsonPath("$.endTime").value("12:15"))
+			.andExpect(jsonPath("$.status").value("PENDING"));
+		// avant / après la journée type (9h–12h30 / 13h30–18h), collées ou non
+		json(post("/api/me/overtime-requests"), overtimeAt(MON, "07:00", "09:00"), ALICE).andExpect(status().isCreated());
+		json(post("/api/me/overtime-requests"), overtimeAt(MON, "18:00", "19:00"), ALICE).andExpect(status().isCreated());
+		json(post("/api/me/overtime-requests"), overtimeAt(MON, "20:00", "21:00"), ALICE).andExpect(status().isCreated());
+	}
+
+	@Test
+	void heuresSup_jamaisSurLaJourneeTypeNiLaPause_400() throws Exception {
+		for (String[] r : new String[][] { { "17:00", "19:00" }, { "08:00", "10:00" }, { "10:00", "11:00" } }) {
+			json(post("/api/me/overtime-requests"), overtimeAt(MON, r[0], r[1]), ALICE).andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.detail", containsString("journée type")));
+		}
+		for (String[] r : new String[][] { { "12:30", "13:30" }, { "12:00", "12:45" }, { "10:00", "16:00" } }) {
+			json(post("/api/me/overtime-requests"), overtimeAt(SAT, r[0], r[1]), ALICE).andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.detail", containsString("pause de midi")));
+		}
+		assertThat(jdbc.queryForObject("select count(*) from overtime_request", Long.class)).isZero();
+	}
+
+	@Test
+	void heuresSup_chevauchement_409_saufSiAnnuleeOuRefusee() throws Exception {
+		long id = createdId(json(post("/api/me/overtime-requests"), overtimeAt(SAT, "10:00", "12:00"), ALICE));
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "11:00", "12:30"), ALICE).andExpect(status().isConflict());
+		// collée : OK ; un autre employé n'est pas concerné
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "09:00", "10:00"), ALICE).andExpect(status().isCreated());
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "10:00", "12:00"), BRUNO).andExpect(status().isCreated());
+		mvc.perform(post("/api/me/overtime-requests/" + id + "/cancel").header("X-Dev-User", ALICE))
+			.andExpect(status().isOk());
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "11:00", "12:30"), ALICE).andExpect(status().isCreated());
+	}
+
+	@Test
+	void heuresSup_deJMoins31AJPlus62() throws Exception {
+		json(post("/api/me/overtime-requests"), overtimeAt("2026-12-04", "18:00", "19:00"), ALICE)
+			.andExpect(status().isCreated());
+		json(post("/api/me/overtime-requests"), overtimeAt("2026-12-03", "18:00", "19:00"), ALICE)
+			.andExpect(status().isBadRequest());
+		json(post("/api/me/overtime-requests"), overtimeAt("2027-03-06", "18:00", "19:00"), ALICE)
+			.andExpect(status().isCreated());
+		// J+62 tombe un dimanche : centre fermé
+		json(post("/api/me/overtime-requests"), overtimeAt("2027-03-07", "18:00", "19:00"), ALICE)
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail").value("Le centre est fermé le dimanche"));
+		json(post("/api/me/overtime-requests"), overtimeAt("2027-03-08", "18:00", "19:00"), ALICE)
+			.andExpect(status().isBadRequest());
+	}
+
+	// ---------- heures sup saisies par l'admin pour un employé ----------
+
+	@Test
+	void admin_poseDesHeuresSupPourUnEmploye_accepteesDirectement() throws Exception {
+		long adminId = jdbc.queryForObject("select id from app_user where email = ?", Long.class, ADMIN);
+		json(post("/api/admin/users/" + aliceId + "/overtime-requests"), overtimeAt(TUE, "18:00", "20:30"), ADMIN)
+			.andExpect(status().isCreated())
+			.andExpect(jsonPath("$.userId").value((int) aliceId))
+			.andExpect(jsonPath("$.status").value("APPROVED"))
+			.andExpect(jsonPath("$.createdBy").value((int) adminId))
+			.andExpect(jsonPath("$.hours").value(2.5));
+		balance(ALICE).andExpect(jsonPath("$.balance").value(2.5));
+		history().andExpect(jsonPath("$.movements[0].label", containsString("saisies par l'admin")));
+		mvc.perform(get("/api/planning").param("from", MON).param("to", "2027-01-11").header("X-Dev-User", BRUNO))
+			.andExpect(jsonPath("$.overtimes[0].createdBy").value((int) adminId))
+			.andExpect(jsonPath("$.overtimes[0].status").value("APPROVED"));
+	}
+
+	@Test
+	void admin_heuresSupPourUnEmploye_memesRegles() throws Exception {
+		// sur la journée type d'Alice (9h–12h30 / 13h30–18h), sur la pause : 400
+		json(post("/api/admin/users/" + aliceId + "/overtime-requests"), overtimeAt(TUE, "17:00", "19:00"), ADMIN)
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("journée type")));
+		json(post("/api/admin/users/" + aliceId + "/overtime-requests"), overtimeAt(SAT, "12:00", "13:00"), ADMIN)
+			.andExpect(status().isBadRequest());
+		// chevauche une demande d'Alice : 409
+		json(post("/api/me/overtime-requests"), overtimeAt(TUE, "18:00", "19:00"), ALICE).andExpect(status().isCreated());
+		json(post("/api/admin/users/" + aliceId + "/overtime-requests"), overtimeAt(TUE, "18:30", "20:00"), ADMIN)
+			.andExpect(status().isConflict());
+		json(post("/api/admin/users/999999/overtime-requests"), overtimeAt(TUE, "18:00", "19:00"), ADMIN)
+			.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void admin_retireDesHeuresSup_memeAcceptees_soldeMisAJour() throws Exception {
+		long approved = createdId(json(post("/api/admin/users/" + aliceId + "/overtime-requests"),
+				overtimeAt(TUE, "18:00", "20:00"), ADMIN));
+		long pending = declare(ALICE, SAT, "1");
+		balance(ALICE).andExpect(jsonPath("$.balance").value(2));
+		mvc.perform(post("/api/admin/overtime-requests/" + approved + "/cancel").header("X-Dev-User", ADMIN))
+			.andExpect(status().isOk())
+			.andExpect(jsonPath("$.status").value("CANCELLED"));
+		mvc.perform(post("/api/admin/overtime-requests/" + pending + "/cancel").header("X-Dev-User", ADMIN))
+			.andExpect(status().isOk());
+		balance(ALICE).andExpect(jsonPath("$.balance").value(0));
+		// déjà retirée : 409 ; inconnue : 404
+		mvc.perform(post("/api/admin/overtime-requests/" + approved + "/cancel").header("X-Dev-User", ADMIN))
+			.andExpect(status().isConflict());
+		mvc.perform(post("/api/admin/overtime-requests/999999/cancel").header("X-Dev-User", ADMIN))
+			.andExpect(status().isNotFound());
+	}
+
+	@Test
+	void admin_retrait_refuseSiLesHeuresSontDejaRecuperees() throws Exception {
+		long approved = createdId(json(post("/api/admin/users/" + aliceId + "/overtime-requests"),
+				overtimeAt(TUE, "18:00", "20:00"), ADMIN));
+		// récup de 2 h en attente : le disponible tombe à 0
+		absence(ALICE, "RECUP_HEURES_SUP", WED, WED, "14:00", "16:00").andExpect(status().isCreated());
+		mvc.perform(post("/api/admin/overtime-requests/" + approved + "/cancel").header("X-Dev-User", ADMIN))
+			.andExpect(status().isConflict())
+			.andExpect(jsonPath("$.detail", containsString("disponible passerait à -2 h")));
+		assertThat(dbStatus(approved, "overtime_request")).isEqualTo("APPROVED");
+	}
+
+	@Test
+	void admin_neSAjoutePasSesPropresHeuresSup_400() throws Exception {
+		long adminId = jdbc.queryForObject("select id from app_user where email = ?", Long.class, ADMIN);
+		json(post("/api/admin/users/" + adminId + "/overtime-requests"), overtimeAt(SAT, "10:00", "12:00"), ADMIN)
+			.andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("lui-même")));
+	}
+
+	@Test
+	void employee_heuresSupPourAutrui_etRetrait_403() throws Exception {
+		long brunoId = jdbc.queryForObject("select id from app_user where email = ?", Long.class, BRUNO);
+		json(post("/api/admin/users/" + brunoId + "/overtime-requests"), overtimeAt(SAT, "10:00", "12:00"), ALICE)
+			.andExpect(status().isForbidden());
+		json(post("/api/admin/users/" + aliceId + "/overtime-requests"), overtimeAt(SAT, "10:00", "12:00"), ALICE)
+			.andExpect(status().isForbidden());
+		long id = declare(BRUNO, SAT, "2");
+		mvc.perform(post("/api/admin/overtime-requests/" + id + "/cancel").header("X-Dev-User", ALICE))
+			.andExpect(status().isForbidden());
+		mvc.perform(post("/api/admin/overtime-requests/" + id + "/cancel").header("X-Dev-User", BRUNO))
+			.andExpect(status().isForbidden());
+		mvc.perform(post("/api/admin/overtime-requests/" + id + "/cancel")).andExpect(status().isUnauthorized());
+		assertThat(dbStatus(id, "overtime_request")).isEqualTo("PENDING");
+	}
+
+	@Test
 	void heuresSup_invalides_400() throws Exception {
-		json(post("/api/me/overtime-requests"), overtime("2026-11-10", "1.1"), ALICE).andExpect(status().isBadRequest());
-		json(post("/api/me/overtime-requests"), overtime("2026-11-10", "0"), ALICE).andExpect(status().isBadRequest());
-		json(post("/api/me/overtime-requests"), "{\"date\": \"2026-11-10\", \"hours\": 2, \"reason\": \" \"}", ALICE)
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "10:10", "12:00"), ALICE).andExpect(status().isBadRequest());
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "12:00", "10:00"), ALICE).andExpect(status().isBadRequest());
+		json(post("/api/me/overtime-requests"), overtimeAt(SAT, "10:00", "10:00"), ALICE).andExpect(status().isBadRequest());
+		json(post("/api/me/overtime-requests"), """
+				{"date": "%s", "startTime": "10:00", "endTime": "12:00", "reason": " "}""".formatted(SAT), ALICE)
+			.andExpect(status().isBadRequest());
+		json(post("/api/me/overtime-requests"), """
+				{"date": "%s", "hours": 2, "reason": "ancien format"}""".formatted(SAT), ALICE)
 			.andExpect(status().isBadRequest());
 	}
 
 	@Test
 	void transitions_refuseesHorsPending_409() throws Exception {
-		long id = declare(ALICE, "2026-11-10", "2");
+		long id = declare(ALICE, SAT_BEFORE, "2");
 		json(post("/api/admin/overtime-requests/" + id + "/decision"), decision(false), ADMIN)
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.status").value("REJECTED"));
@@ -255,7 +412,7 @@ class RequestsControllerTest {
 
 	@Test
 	void annulationParLeDemandeur() throws Exception {
-		long id = declare(ALICE, "2026-11-10", "2");
+		long id = declare(ALICE, SAT_BEFORE, "2");
 		mvc.perform(post("/api/me/overtime-requests/" + id + "/cancel").header("X-Dev-User", ALICE))
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.status").value("CANCELLED"));
@@ -279,28 +436,6 @@ class RequestsControllerTest {
 	}
 
 	@Test
-	void absence_tientCompteDesHeuresAjoutees_etDeLaCoupure() throws Exception {
-		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values "
-				+ "(?, ?::date, '19:00', '21:00'), (?, ?::date, '18:00', '18:30')", aliceId, TUE, aliceId, TUE);
-		// dans la plage ajoutée ; à cheval sur journée type + plage collée : OK
-		absence(ALICE, "SANS_SOLDE", TUE, TUE, "19:00", "20:00").andExpect(status().isCreated());
-		absence(ALICE, "SANS_SOLDE", TUE, TUE, "16:30", "18:00").andExpect(status().isCreated())
-			.andExpect(jsonPath("$.hours").value(1.5));
-		// commencer dans la coupure : refusé
-		absence(ALICE, "SANS_SOLDE", TUE, TUE, "18:00", "18:30").andExpect(status().isCreated());
-		absence(ALICE, "SANS_SOLDE", TUE, TUE, "18:45", "20:30").andExpect(status().isBadRequest())
-			.andExpect(jsonPath("$.detail", containsString("(09:00–12:30, 13:30–18:30, 19:00–21:00)")));
-	}
-
-	@Test
-	void absence_enjambeLaCoupure_heuresTravailleesSeulement() throws Exception {
-		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values (?, ?::date, '19:00', '21:00')",
-				aliceId, TUE);
-		absence(ALICE, "SANS_SOLDE", TUE, TUE, "17:00", "20:00").andExpect(status().isCreated())
-			.andExpect(jsonPath("$.hours").value(2));
-	}
-
-	@Test
 	void absence_enjambeLaPauseDeMidi_nonComptee_maisNiDebutNiFinDedans() throws Exception {
 		for (String[] r : new String[][] { { "12:30", "13:30" }, { "12:45", "15:00" }, { "12:30", "15:00" },
 				{ "11:00", "13:00" }, { "11:00", "13:30" } }) {
@@ -313,23 +448,25 @@ class RequestsControllerTest {
 	@Test
 	void journeeEntiere_enVacances_heuresDeLaSemaineDeVacances() throws Exception {
 		jdbc.update("insert into school_holiday_week values (?::date)", MON);
-		jdbc.update("insert into typical_day (user_id, week_type, day_of_week, morning_start, morning_end) "
-				+ "select ?, 'HOLIDAY', d, '09:00', '12:00' from generate_series(1, 7) d", aliceId);
+		jdbc.update("update typical_day set morning_start = '09:00', morning_end = '12:00' "
+				+ "where user_id = ? and week_type = 'HOLIDAY' and day_of_week < 7", aliceId);
 		absence(ALICE, "SANS_SOLDE", TUE, TUE, null, null).andExpect(status().isCreated())
 			.andExpect(jsonPath("$.hours").value(3));
 	}
 
 	@Test
-	void journeeEntiere_heuresAjouteesComprises() throws Exception {
-		jdbc.update("insert into special_day (user_id, day_date, start_time, end_time) values (?, ?::date, '19:00', '21:00')",
-				aliceId, TUE);
+	void absence_uniquementSurLaJourneeType_pasSurLesHeuresSup() throws Exception {
+		json(post("/api/me/overtime-requests"), overtimeAt(TUE, "19:00", "21:00"), ALICE).andExpect(status().isCreated());
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "19:00", "20:00").andExpect(status().isBadRequest())
+			.andExpect(jsonPath("$.detail", containsString("(09:00–12:30, 13:30–18:00)")));
+		absence(ALICE, "SANS_SOLDE", TUE, TUE, "16:00", "20:00").andExpect(status().isBadRequest());
+		// journée entière : la journée type seulement
 		absence(ALICE, "SANS_SOLDE", TUE, TUE, null, null).andExpect(status().isCreated())
-			.andExpect(jsonPath("$.hours").value(10));
+			.andExpect(jsonPath("$.hours").value(8));
 	}
-
 	@Test
 	void horairesNonAlignes_plageRogneeAuQuartDHeure_acceptee() throws Exception {
-		jdbc.update("update typical_day set morning_start = '09:10', afternoon_end = '17:10' where user_id = ? and day_of_week = 2",
+		jdbc.update("update typical_day set morning_start = '09:10', afternoon_end = '17:10' where user_id = ? and day_of_week = 2 and week_type = 'CLASSIC'",
 				aliceId);
 		// ce que le front envoie après rognage au quart d'heure à l'intérieur des horaires
 		absence(ALICE, "SANS_SOLDE", TUE, TUE, "09:15", "17:00").andExpect(status().isCreated())
@@ -338,8 +475,8 @@ class RequestsControllerTest {
 
 	@Test
 	void absenceTropLongue_400_etPas500() throws Exception {
-		// 7 jours travaillés de 00:00 à 23:45 sur 62 jours ≈ 1 410 h > 999 h (capacité de la colonne)
-		jdbc.update("update typical_day set morning_start = '00:00', morning_end = '12:30', afternoon_start = '13:30', afternoon_end = '23:45' where user_id = ?", aliceId);
+		// 6 jours travaillés de 00:00 à 23:45 sur 62 jours ≈ 1 200 h > 999 h (capacité de la colonne)
+		jdbc.update("update typical_day set morning_start = '00:00', morning_end = '12:30', afternoon_start = '13:30', afternoon_end = '23:45' where user_id = ? and day_of_week < 7 and week_type = 'CLASSIC'", aliceId);
 		absence(ALICE, "SANS_SOLDE", MON, "2027-03-06", null, null).andExpect(status().isBadRequest())
 			.andExpect(jsonPath("$.detail", containsString("ne peut pas dépasser 999 h")));
 	}
@@ -492,8 +629,8 @@ class RequestsControllerTest {
 		grant("4");
 		long id = createdId(absence(ALICE, "RECUP_HEURES_SUP", MON, MON, "14:00", "17:00"));
 		json(post("/api/admin/absence-requests/" + id + "/decision"), decision(true), ADMIN).andExpect(status().isOk());
-		balance(ALICE).andExpect(jsonPath("$.balance").value(1))
-			.andExpect(jsonPath("$.movements[?(@.kind == 'RECUP')].label")
+		balance(ALICE).andExpect(jsonPath("$.balance").value(1));
+		history().andExpect(jsonPath("$.movements[?(@.kind == 'RECUP')].label")
 				.value("Récupération le 04/01/2027 de 14:00 à 17:00"));
 		mvc.perform(get("/api/planning").param("from", MON).param("to", "2027-01-11").header("X-Dev-User", BRUNO))
 			.andExpect(jsonPath("$.absences[0].id").value((int) id))
@@ -556,8 +693,8 @@ class RequestsControllerTest {
 
 	@Test
 	void pending_listeLesDemandesEnAttenteDeTous() throws Exception {
-		declare(ALICE, "2026-11-10", "2");
-		long rejected = declare(BRUNO, "2026-11-10", "3");
+		declare(ALICE, SAT_BEFORE, "2");
+		long rejected = declare(BRUNO, SAT_BEFORE, "3");
 		json(post("/api/admin/overtime-requests/" + rejected + "/decision"), decision(false), ADMIN);
 		absence(BRUNO, "SANS_SOLDE", MON, MON, null, null);
 		mvc.perform(get("/api/admin/pending-requests").header("X-Dev-User", ADMIN))
@@ -568,7 +705,7 @@ class RequestsControllerTest {
 
 	@Test
 	void chaqueTransitionPublieUnEvenement() throws Exception {
-		long id = declare(ALICE, "2026-11-10", "2");
+		long id = declare(ALICE, SAT_BEFORE, "2");
 		json(post("/api/admin/overtime-requests/" + id + "/decision"), "{\"approved\": false, \"comment\": \"non\"}",
 				ADMIN);
 		assertThat(events.stream(RequestStatusChanged.class))
@@ -588,6 +725,7 @@ class RequestsControllerTest {
 		return Long.parseLong(body.replaceAll("^\\{\"id\":(\\d+).*$", "$1"));
 	}
 
+	/** Déclare `hours` heures sup à partir de 8h (le samedi : jour non travaillé). */
 	private long declare(String user, String date, String hours) throws Exception {
 		return createdId(json(post("/api/me/overtime-requests"), overtime(date, hours), user));
 	}
@@ -613,6 +751,12 @@ class RequestsControllerTest {
 			.andExpect(status().isCreated());
 	}
 
+	/** Historique du solde d'Alice (réservé à l'admin). */
+	private ResultActions history() throws Exception {
+		return mvc.perform(get("/api/admin/users/" + aliceId + "/balance").header("X-Dev-User", ADMIN))
+			.andExpect(status().isOk());
+	}
+
 	private ResultActions balance(String user) throws Exception {
 		return mvc.perform(get("/api/me/balance").header("X-Dev-User", user)).andExpect(status().isOk());
 	}
@@ -622,8 +766,14 @@ class RequestsControllerTest {
 	}
 
 	private static String overtime(String date, String hours) {
+		int minutes = (int) (Double.parseDouble(hours) * 60);
+		return overtimeAt(date, "08:00", java.time.LocalTime.of(8, 0).plusMinutes(minutes).toString());
+	}
+
+	private static String overtimeAt(String date, String start, String end) {
 		return """
-				{"date": "%s", "hours": %s, "reason": "réunion du soir"}""".formatted(date, hours);
+				{"date": "%s", "startTime": "%s", "endTime": "%s", "reason": "réunion du soir"}""".formatted(date, start,
+				end);
 	}
 
 	private static String decision(boolean approved) {

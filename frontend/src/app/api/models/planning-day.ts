@@ -4,13 +4,11 @@
 import { LocalTime } from '../models/local-time';
 
 /**
- * Plage travaillée d'un employé : journée type (specialDayId null, matin et après-midi) ou heures ajoutées
- * (specialDayId renseigné, plusieurs possibles).
+ * Plage de la journée type d'un employé (matin ou après-midi).
  */
 export interface PlanningDay {
   date: string;
   endTime: LocalTime;
-  specialDayId?: (number | null);
   startTime: LocalTime;
   userId: number;
 }

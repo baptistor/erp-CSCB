@@ -1,7 +1,6 @@
 package com.erp.leave;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -113,7 +112,7 @@ public class AbsenceService {
 				throw badRequest("Aucun jour travaillé sur cette période");
 			}
 		}
-		BigDecimal hours = toQuarterHours(minutes);
+		BigDecimal hours = Hours.ofMinutes(minutes);
 		if (hours.compareTo(MAX_HOURS) > 0) {
 			throw badRequest("Une absence ne peut pas dépasser " + Hours.format(MAX_HOURS) + " (" + Hours.format(hours)
 					+ " sur cette période) : découpez-la en plusieurs demandes");
@@ -171,17 +170,6 @@ public class AbsenceService {
 
 	private static boolean onQuarter(LocalTime time) {
 		return time.getMinute() % 15 == 0 && time.getSecond() == 0 && time.getNano() == 0;
-	}
-
-	/** Minutes → heures arrondies au quart d'heure le plus proche (règle « pas de 0,25 »). */
-	static BigDecimal toQuarterHours(long minutes) {
-		long quarters = Math.round(minutes / 15.0);
-		return BigDecimal.valueOf(quarters).divide(BigDecimal.valueOf(4), 2, RoundingMode.UNNECESSARY);
-	}
-
-	@Transactional(readOnly = true)
-	public List<AbsenceRequestDto> mine(Long userId) {
-		return requests.findByUserIdOrderByStartDateDesc(userId).stream().map(AbsenceRequestDto::of).toList();
 	}
 
 	@Transactional(readOnly = true)

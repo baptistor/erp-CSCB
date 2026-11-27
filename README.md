@@ -1,6 +1,14 @@
 # erp-CSCB
 Mise en place d'un emploi du temps collaboratif pour le personnel d'un centre social et culturel
 
+## Comptes de démo (dev)
+La base ne contient au départ que l'admin de la configuration. Pour ajouter les 10 comptes de démo (admin + 9 employés,
+avec leurs semaines type), une fois le back démarré :
+```
+docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < scripts/comptes-demo.sql
+```
+Le script est idempotent : il peut être relancé sans risque.
+
 ## Démo depuis internet (tunnel temporaire)
 
 Pour faire tester l'application à distance, sans déploiement : un tunnel Cloudflare expose ton poste

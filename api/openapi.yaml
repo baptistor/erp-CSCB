@@ -45,7 +45,7 @@ paths:
     get:
       operationId: getPlanning
       tags: [planning]
-      summary: Horaires (journée type + heures ajoutées) et absences (en attente et acceptées) de tous les employés
+      summary: Horaires (journée type), heures sup et absences (en attente et acceptées) de tous les employés
       parameters:
         - name: from
           in: query
@@ -176,106 +176,50 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
-  /special-days:
-    post:
-      operationId: createSpecialDay
-      tags: [schedule]
-      summary: Ajoute des heures à un jour, en dehors de la journée type
-      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé). Une plage ne doit pas empiéter sur la journée type ni sur la pause 12:30–13:30 (400) ni sur d'autres heures ajoutées (409)."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SpecialDayInput'
-      responses:
-        '201':
-          description: Heures ajoutées enregistrées
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SpecialDay'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-  /special-days/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: integer
-          format: int64
-    put:
-      operationId: updateSpecialDay
-      tags: [schedule]
-      summary: Modifie des heures ajoutées
-      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé). Une plage ne doit pas empiéter sur la journée type ni sur la pause 12:30–13:30 (400) ni sur d'autres heures ajoutées (409)."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SpecialDayInput'
-      responses:
-        '200':
-          description: Heures ajoutées enregistrées
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SpecialDay'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          $ref: '#/components/responses/Conflict'
-    delete:
-      operationId: deleteSpecialDay
-      tags: [schedule]
-      summary: Retire des heures ajoutées
-      description: "ADMIN : tout employé, toute date. EMPLOYEE : ses propres journées uniquement, à partir d'aujourd'hui (403 sinon pour un autre employé, 400 pour un jour passé)."
-      responses:
-        '204':
-          description: Supprimée
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-  /me/requests:
+  /school-holiday-calendar:
     get:
-      operationId: getMyRequests
-      tags: [requests]
-      summary: Mes déclarations d'heures sup et mes absences
+      operationId: getSchoolHolidayCalendar
+      tags: [schedule]
+      summary: État de validation du calendrier des vacances scolaires (ADMIN)
       responses:
         '200':
-          description: OK
+          description: État de validation
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Requests'
+                $ref: '#/components/schemas/SchoolHolidayCalendar'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    put:
+      operationId: validateSchoolHolidayCalendar
+      tags: [schedule]
+      summary: Valide le calendrier des vacances scolaires jusqu'à une date (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SchoolHolidayValidationInput'
+      responses:
+        '200':
+          description: Nouvel état de validation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchoolHolidayCalendar'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
   /me/balance:
     get:
       operationId: getMyBalance
       tags: [requests]
-      summary: Mon solde d'heures sup, disponible et historique
+      summary: Mon solde d'heures sup et mon disponible (movements toujours vide ; historique réservé à l'admin)
       responses:
         '200':
           description: OK
@@ -289,7 +233,8 @@ paths:
     post:
       operationId: declareOvertime
       tags: [requests]
-      summary: Déclarer des heures supplémentaires (PENDING)
+      summary: Poser des heures supplémentaires sur le planning (demande PENDING)
+      description: "Plage horaire d'un jour, au quart d'heure ; heures calculées = durée. Date de J-31 à J+62. Jamais le dimanche (centre fermé), ni sur la journée type, ni sur la pause 12:30–13:30 en semaine classique (pas de pause en semaine de vacances scolaires) (400), ni sur une autre heure sup PENDING/APPROVED de l'employé (409)."
       requestBody:
         required: true
         content:
@@ -307,6 +252,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /me/overtime-requests/{id}/cancel:
     parameters:
       - name: id
@@ -439,6 +386,70 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
+  /admin/overtime-requests/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: adminCancelOvertime
+      tags: [admin]
+      summary: Retirer des heures sup d'un employé, en attente ou acceptées (ADMIN)
+      description: "Passe la demande au statut CANCELLED ; une heure sup acceptée sort du solde. 409 si elle est déjà refusée ou annulée, ou si le disponible de l'employé deviendrait négatif (heures déjà récupérées)."
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OvertimeRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /admin/users/{userId}/overtime-requests:
+    parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    post:
+      operationId: adminDeclareOvertime
+      tags: [admin]
+      summary: Poser des heures sup pour un employé, acceptées directement (ADMIN)
+      description: "Mêmes règles que POST /me/overtime-requests, sur la journée type de l'employé (400 / 409). Créée au statut APPROVED, saisie par l'admin. 400 si userId est l'admin lui-même."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OvertimeInput'
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OvertimeRequest'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
   /admin/absence-requests/{id}/decision:
     parameters:
       - name: id
@@ -552,7 +563,7 @@ components:
           schema:
             $ref: '#/components/schemas/ProblemDetail'
     Conflict:
-      description: Conflit (ex. chevauchement avec des heures déjà ajoutées)
+      description: Conflit (ex. chevauchement avec d'autres heures sup)
       content:
         application/problem+json:
           schema:
@@ -615,7 +626,7 @@ components:
       example: '08:30'
     TypicalDay:
       type: object
-      description: Journée type, matin (fin ≤ 12:30) et après-midi (début ≥ 13:30), chacun facultatif (null). Aucun = non travaillé.
+      description: Journée type. Semaine classique, matin (fin ≤ 12:30) et après-midi (début ≥ 13:30), chacun facultatif (null) ; semaine de vacances, une seule plage dans morningStart/morningEnd (sans pause, après-midi null). Aucun = non travaillé. Dimanche (7) toujours non travaillé.
       required: [dayOfWeek]
       properties:
         dayOfWeek:
@@ -641,7 +652,7 @@ components:
             - type: 'null'
     UserSchedule:
       type: object
-      required: [weeklyHours, days]
+      required: [weeklyHours, days, holidayDays]
       properties:
         weeklyHours:
           type: number
@@ -655,15 +666,15 @@ components:
           items:
             $ref: '#/components/schemas/TypicalDay'
         holidayDays:
-          type: [array, 'null']
+          type: array
           minItems: 7
           maxItems: 7
-          description: Semaine de vacances scolaires ; null = à compléter (reprend la semaine classique)
+          description: Semaine de vacances scolaires (une plage par jour, sans pause ; 9h–16h du lundi au vendredi par défaut)
           items:
             $ref: '#/components/schemas/TypicalDay'
-    SpecialDayInput:
+    PlanningDay:
       type: object
-      description: Plage d'heures ajoutée à un jour, en dehors de la journée type.
+      description: Plage de la journée type d'un employé (matin ou après-midi).
       required: [userId, date, startTime, endTime]
       properties:
         userId:
@@ -676,9 +687,10 @@ components:
           $ref: '#/components/schemas/LocalTime'
         endTime:
           $ref: '#/components/schemas/LocalTime'
-    SpecialDay:
+    PlanningOvertime:
       type: object
-      required: [id, userId, date, startTime, endTime]
+      description: Heures sup posées sur le planning, PENDING ou APPROVED, visibles par tous (sans motif).
+      required: [id, userId, date, startTime, endTime, status]
       properties:
         id:
           type: integer
@@ -693,24 +705,10 @@ components:
           $ref: '#/components/schemas/LocalTime'
         endTime:
           $ref: '#/components/schemas/LocalTime'
-    PlanningDay:
-      type: object
-      description: |
-        Plage travaillée d'un employé : journée type (specialDayId null, matin et après-midi) ou heures ajoutées
-        (specialDayId renseigné, plusieurs possibles).
-      required: [userId, date, startTime, endTime]
-      properties:
-        userId:
-          type: integer
-          format: int64
-        date:
-          type: string
-          format: date
-        startTime:
-          $ref: '#/components/schemas/LocalTime'
-        endTime:
-          $ref: '#/components/schemas/LocalTime'
-        specialDayId:
+        status:
+          $ref: '#/components/schemas/RequestStatus'
+        createdBy:
+          description: Admin qui a saisi ces heures pour l'employé (null = demandées par l'employé)
           type: [integer, 'null']
           format: int64
     PlanningAbsence:
@@ -742,14 +740,48 @@ components:
             - type: 'null'
         status:
           $ref: '#/components/schemas/RequestStatus'
+    SchoolHolidayCalendar:
+      type: object
+      required: [validatedUntil, validatedBy, validatedAt, requiredUntil, late]
+      properties:
+        validatedUntil:
+          type: [string, 'null']
+          format: date
+          description: Dernier jour validé (null si jamais validé)
+        validatedBy:
+          type: [integer, 'null']
+          format: int64
+          description: Admin qui a validé
+        validatedAt:
+          type: [string, 'null']
+          format: date-time
+        requiredUntil:
+          type: string
+          format: date
+          description: Aujourd'hui + 6 mois, date minimale à valider
+        late:
+          type: boolean
+          description: Vrai si validatedUntil est absent ou antérieur à requiredUntil
+    SchoolHolidayValidationInput:
+      type: object
+      required: [validatedUntil]
+      properties:
+        validatedUntil:
+          type: string
+          format: date
+          description: Au plus 1 an après aujourd'hui, jamais avant la date déjà validée
     Planning:
       type: object
-      required: [days, absences, holidayWeeks]
+      required: [days, overtimes, absences, holidayWeeks]
       properties:
         days:
           type: array
           items:
             $ref: '#/components/schemas/PlanningDay'
+        overtimes:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanningOvertime'
         absences:
           type: array
           items:
@@ -768,19 +800,21 @@ components:
       enum: [RECUP_HEURES_SUP, SANS_SOLDE]
     OvertimeInput:
       type: object
-      required: [date, hours, reason]
+      description: Heures sup posées sur le planning ; le nombre d'heures est calculé (durée de la plage).
+      required: [date, startTime, endTime, reason]
       properties:
         date:
           type: string
           format: date
-        hours:
-          type: number
-          description: Heures > 0, au pas de 0,25 (max 24)
+        startTime:
+          $ref: '#/components/schemas/LocalTime'
+        endTime:
+          $ref: '#/components/schemas/LocalTime'
         reason:
           type: string
     OvertimeRequest:
       type: object
-      required: [id, userId, date, hours, reason, status]
+      required: [id, userId, date, startTime, endTime, hours, reason, status]
       properties:
         id:
           type: integer
@@ -791,6 +825,14 @@ components:
         date:
           type: string
           format: date
+        startTime:
+          $ref: '#/components/schemas/LocalTime'
+        endTime:
+          $ref: '#/components/schemas/LocalTime'
+        createdBy:
+          description: Admin qui a saisi ces heures pour l'employé (null = demandées par l'employé)
+          type: [integer, 'null']
+          format: int64
         hours:
           type: number
         reason:

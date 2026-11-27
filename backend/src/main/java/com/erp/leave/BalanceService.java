@@ -61,13 +61,20 @@ public class BalanceService {
 			.subtract(absences.sumHours(userId, AbsenceType.RECUP_HEURES_SUP, RequestStatus.PENDING));
 	}
 
+	/** Solde et disponible, sans l'historique (vue employé). */
+	@Transactional(readOnly = true)
+	public BalanceDto summary(Long userId) {
+		return new BalanceDto(balance(userId), available(userId), List.of());
+	}
+
 	@Transactional(readOnly = true)
 	public BalanceDto details(Long userId) {
 		requireUser(userId);
 		List<MovementDto> movements = new ArrayList<>();
 		overtimes.findByUserIdAndStatusOrderByWorkDateDesc(userId, RequestStatus.APPROVED)
 			.forEach(o -> movements.add(new MovementDto(o.getWorkDate(), MovementKind.OVERTIME, o.getHours(),
-					"Heures sup : " + o.getReason())));
+					"Heures sup de " + o.getStartTime() + " à " + o.getEndTime()
+							+ (o.getCreatedBy() == null ? "" : " (saisies par l'admin)") + " : " + o.getReason())));
 		absences
 			.findByUserIdAndTypeAndStatusOrderByStartDateDesc(userId, AbsenceType.RECUP_HEURES_SUP,
 					RequestStatus.APPROVED)

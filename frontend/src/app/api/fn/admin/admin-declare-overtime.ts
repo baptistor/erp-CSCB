@@ -7,16 +7,18 @@ import { filter, map } from 'rxjs/operators';
 import { StrictHttpResponse } from '../../strict-http-response';
 import { RequestBuilder } from '../../request-builder';
 
-import { SpecialDay } from '../../models/special-day';
-import { SpecialDayInput } from '../../models/special-day-input';
+import { OvertimeInput } from '../../models/overtime-input';
+import { OvertimeRequest } from '../../models/overtime-request';
 
-export interface CreateSpecialDay$Params {
-      body: SpecialDayInput
+export interface AdminDeclareOvertime$Params {
+  userId: number;
+      body: OvertimeInput
 }
 
-export function createSpecialDay(http: HttpClient, rootUrl: string, params: CreateSpecialDay$Params, context?: HttpContext): Observable<StrictHttpResponse<SpecialDay>> {
-  const rb = new RequestBuilder(rootUrl, createSpecialDay.PATH, 'post');
+export function adminDeclareOvertime(http: HttpClient, rootUrl: string, params: AdminDeclareOvertime$Params, context?: HttpContext): Observable<StrictHttpResponse<OvertimeRequest>> {
+  const rb = new RequestBuilder(rootUrl, adminDeclareOvertime.PATH, 'post');
   if (params) {
+    rb.path('userId', params.userId, {});
     rb.body(params.body, 'application/json');
   }
 
@@ -25,9 +27,9 @@ export function createSpecialDay(http: HttpClient, rootUrl: string, params: Crea
   ).pipe(
     filter((r: any): r is HttpResponse<any> => r instanceof HttpResponse),
     map((r: HttpResponse<any>) => {
-      return r as StrictHttpResponse<SpecialDay>;
+      return r as StrictHttpResponse<OvertimeRequest>;
     })
   );
 }
 
-createSpecialDay.PATH = '/special-days';
+adminDeclareOvertime.PATH = '/admin/users/{userId}/overtime-requests';

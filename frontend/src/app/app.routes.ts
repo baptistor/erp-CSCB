@@ -19,12 +19,6 @@ export const routes: Routes = [
         loadComponent: () => import('./features/planning/planning-page').then((m) => m.PlanningPage),
       },
       {
-        path: 'mes-demandes',
-        title: 'Mes demandes',
-        loadComponent: () =>
-          import('./features/my-requests/my-requests-page').then((m) => m.MyRequestsPage),
-      },
-      {
         path: 'admin',
         canMatch: [adminGuard],
         loadChildren: () => import('./features/admin/admin.routes').then((m) => m.adminRoutes),

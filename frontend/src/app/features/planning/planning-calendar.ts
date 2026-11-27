@@ -12,18 +12,16 @@ import {
 import { MatButtonModule } from '@angular/material/button';
 import { MatButtonToggleModule } from '@angular/material/button-toggle';
 import { MatDialog } from '@angular/material/dialog';
+import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
+import { MatSelectModule } from '@angular/material/select';
 import { MatSnackBar } from '@angular/material/snack-bar';
-import { MatTooltipModule } from '@angular/material/tooltip';
 import { FullCalendarComponent, FullCalendarModule } from '@fullcalendar/angular';
 import dayGridPlugin from '@fullcalendar/angular/daygrid';
 import interactionPlugin from '@fullcalendar/angular/interaction';
 import themePlugin from '@fullcalendar/angular/themes/monarch';
 import type {
   CalendarOptions,
-  DateSelectInfo,
-  EventClickInfo,
-  EventDisplayInfo,
   EventInput,
   EventSourceFuncInfo,
 } from 'fullcalendar';
@@ -31,128 +29,206 @@ import frLocale from 'fullcalendar/locales/fr';
 import { firstValueFrom } from 'rxjs';
 import { Api } from '../../api/api';
 import {
+  adminCancelOvertime,
+  adminDeclareOvertime,
   cancelAbsence,
-  createSpecialDay,
-  deleteSpecialDay,
+  cancelOvertime,
+  declareOvertime,
   getMyBalance,
   getPlanning,
   requestAbsence,
-  updateSpecialDay,
 } from '../../api/functions';
-import { AbsenceInput, Planning, PlanningAbsence, PlanningDay } from '../../api/models';
-import { addDays, errorMessage, toIsoDate } from '../../shared/dates';
-import { formatHours } from '../../shared/requests';
-import { defaultExtra, mergeRanges, outsideTypical, WorkedRange, workedMinutes } from '../../shared/schedule-rules';
-import { colorFor, fullName, tint } from '../../shared/user-color';
-import { AbsenceDialog, AbsenceDialogData, AbsenceDialogResult } from './absence-dialog';
+import { AbsenceInput, Planning, PlanningAbsence, PlanningDay, PlanningOvertime } from '../../api/models';
+import { AuthService } from '../../core/auth/auth.service';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
-import { DayDialog, DayDialogData, DayDialogResult } from './day-dialog';
+import { addDays, errorMessage, liveToday, toIsoDate } from '../../shared/dates';
+import { formatHours } from '../../shared/requests';
+import { colorFor, fullName, OVERTIME_COLOR } from '../../shared/user-color';
+import { AbsenceDialog, AbsenceDialogData, AbsenceDialogResult } from './absence-dialog';
+import { Draft, draftAt, draftError, draftFromSelection, draftHours, MyDay } from './draft';
+import { OvertimeDialog, OvertimeDialogData } from './overtime-dialog';
 import { PeopleStore } from './people-store';
-import { DaysSelection, OwnDayClick, RangeSelection, WeekGrid } from './week-grid';
-import { clipToDay, toMinutes, toTime, weekDays } from './week-grid-layout';
+import { HolidayWarningBanner } from '../../shared/holiday-warning-banner';
+import { DaysSelection, GridPick, WeekGrid } from './week-grid';
+import { toMinutes, toTime, weekDays } from './week-grid-layout';
 
 type View = 'week' | 'month';
-type Mode = 'read' | 'edit';
-type EditAction = 'absence' | 'hours';
+
+/** Délai avant d'afficher l'aperçu d'une ligne de la vue Mois. */
+const PREVIEW_DELAY_MS = 200;
+
+/** Détail d'une ligne de la vue Mois, affiché au survol. */
+interface MonthPreview {
+  name: string;
+  date: string;
+  lines: string[];
+}
 
 const LONG_DATE = new Intl.DateTimeFormat('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 const MONTH_TITLE = new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric' });
+const ACTIVE = new Set(['PENDING', 'APPROVED']);
 
 function parseIso(date: string): Date {
   const [y, m, d] = date.split('-').map(Number);
   return new Date(y, m - 1, d);
 }
 
+const frDate = (iso: string) => iso.split('-').reverse().join('/');
+
 /**
- * Planning (spec §1, §3) : emplois du temps choisis dans le menu de gauche (par défaut le sien), vue Semaine (grille horaire maison,
- * une colonne par personne) ou Mois (FullCalendar), modes Lecture / Édition. Depuis le planning, chacun n'agit que sur
- * son propre emploi du temps : poser une absence (sélection → fenêtre) ou ajouter des heures en dehors de sa
- * journée type (sélection → fenêtre).
+ * Planning (spec §1, §2, §3) : emplois du temps choisis dans le menu de gauche, vue Semaine (grille horaire maison,
+ * une colonne par personne) ou Mois (FullCalendar, lecture seule). Pas de mode Édition : un clic sur mes horaires fait apparaître
+ * une absence à placer, un clic en dehors des heures sup à placer ; ✓ ouvre la fenêtre de confirmation et envoie la
+ * demande. Chacun n'agit que sur son propre emploi du temps.
  */
 @Component({
   selector: 'app-planning-calendar',
-  imports: [FullCalendarModule, MatButtonModule, MatButtonToggleModule, MatIconModule, MatTooltipModule, WeekGrid],
+  imports: [
+    FullCalendarModule,
+    HolidayWarningBanner,
+    MatButtonModule,
+    MatButtonToggleModule,
+    MatFormFieldModule,
+    MatIconModule,
+    MatSelectModule,
+    WeekGrid,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  host: { '[class.editing]': "mode() === 'edit'" },
   template: `
+    <app-holiday-warning-banner />
     <div class="nav">
-      <button mat-icon-button type="button" (click)="shift(-1)" aria-label="Précédent"><mat-icon>chevron_left</mat-icon></button>
-      <button mat-icon-button type="button" (click)="shift(1)" aria-label="Suivant"><mat-icon>chevron_right</mat-icon></button>
-      <button mat-stroked-button type="button" (click)="anchor.set(todayDate())">Aujourd'hui</button>
+      @if (view() === 'month') {
+        <button mat-icon-button type="button" (click)="shift(-1)" aria-label="Précédent"><mat-icon>chevron_left</mat-icon></button>
+        <button mat-icon-button type="button" (click)="shift(1)" aria-label="Suivant"><mat-icon>chevron_right</mat-icon></button>
+        <button mat-stroked-button type="button" (click)="goToday()">Aujourd'hui</button>
+      }
       <h2 class="title">
         {{ title() }}
         @if (holidayWeek()) {
           <span class="holiday">Vacances scolaires</span>
         }
       </h2>
-      <mat-button-toggle-group class="modes" [value]="mode()" (change)="mode.set($event.value)"
-                               aria-label="Mode du planning" hideSingleSelectionIndicator>
-        <mat-button-toggle value="read" matTooltip="Consulter le planning"><mat-icon>visibility</mat-icon> Lecture</mat-button-toggle>
-        <mat-button-toggle value="edit" matTooltip="Poser une absence ou ajouter des heures"><mat-icon>edit</mat-icon> Modifier</mat-button-toggle>
-      </mat-button-toggle-group>
-      <mat-button-toggle-group hideSingleSelectionIndicator [value]="view()" (change)="view.set($event.value)" aria-label="Vue">
+      @if (view() === 'week') {
+        <button mat-stroked-button type="button" (click)="goToday()">Aujourd'hui</button>
+      }
+      <span class="spacer"></span>
+      @if (isAdmin()) {
+        <mat-form-field appearance="outline" subscriptSizing="dynamic" class="target">
+          <mat-label>Pour</mat-label>
+          <mat-select [value]="forUserId()" (valueChange)="setTarget($event)" aria-label="Poser des heures sup pour">
+            <mat-option [value]="null">Moi</mat-option>
+            @for (user of store.others(); track user.id) {
+              <mat-option [value]="user.id">{{ name(user) }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      }
+      <mat-button-toggle-group hideSingleSelectionIndicator [value]="view()" (change)="setView($event.value)" aria-label="Vue">
         <mat-button-toggle value="week">Semaine</mat-button-toggle>
         <mat-button-toggle value="month">Mois</mat-button-toggle>
       </mat-button-toggle-group>
     </div>
-
-    @if (mode() === 'edit') {
-      <div class="top">
-        <mat-button-toggle-group [value]="action()" (change)="action.set($event.value)" aria-label="Action">
-          <mat-button-toggle value="absence">Poser une absence</mat-button-toggle>
-          <mat-button-toggle value="hours">Ajouter des heures</mat-button-toggle>
-        </mat-button-toggle-group>
-        @if (available() != null) {
-          <span class="available">Disponible pour une récup : <strong>{{ hours(available()!) }}</strong></span>
-        }
+    @if (forUserId() != null) {
+      <div class="acting" role="status">
+        <mat-icon>admin_panel_settings</mat-icon>
+        <span>Vous posez des <strong class="overtime">heures sup</strong> pour <strong>{{ targetName() }}</strong> :
+          cliquez en dehors de sa journée type. Elles sont <strong>acceptées directement</strong>.</span>
+        <button mat-button type="button" (click)="setTarget(null)">Revenir à moi</button>
       </div>
-      <p class="hint">
-        @if (action() === 'absence') {
-          Glissez la souris sur un jour pour sélectionner la plage d'absence (elle est rognée à vos horaires), ou sur la
-          ligne « Toute la journée » pour des journées entières. Une fenêtre s'ouvre pour préciser le type et le motif.
-          La croix d'une de vos absences (en attente ou acceptée, pas encore commencée) la supprime.
-        } @else {
-          Glissez la souris sur un jour (à partir d'aujourd'hui), en dehors de votre journée type et de la pause de
-          midi, pour y ajouter des heures. Cliquez sur des heures ajoutées pour les modifier ou les retirer.
-        }
-      </p>
     }
+    <p class="hint">
+      @if (view() === 'week' && forUserId() == null) {
+        <mat-icon>touch_app</mat-icon>
+        Cliquez sur <strong>vos horaires</strong> pour poser une <strong>absence</strong>, ou <strong>en dehors</strong>
+        pour des <strong class="overtime">heures sup</strong> ; ajustez la plage à la souris puis ✓.
+        Journées entières : glissez sur « Toute la journée ».
+      }
+    </p>
 
     @if (view() === 'week') {
-      <app-week-grid [days]="days()" [people]="people()" [planningDays]="weekDaysData()" [absences]="weekAbsences()"
-                     [meId]="meId()" [today]="today" [selectable]="mode() === 'edit'" [cancellable]="mode() === 'edit'"
-                     [ownDayClickable]="mode() === 'edit' && action() === 'hours'"
-                     (rangeSelected)="onRange($event)" (daysSelected)="onDays($event)"
-                     (ownDayClicked)="onOwnDay($event)" (cancelAbsence)="cancel($event)" />
+      <div class="week-wrap">
+      <button type="button" class="week-arrow" (click)="shift(-1)" aria-label="Semaine précédente" title="Semaine précédente">
+        <svg viewBox="0 0 24 64" aria-hidden="true"><path d="M18 6 L6 32 L18 58" /></svg>
+      </button>
+      <app-week-grid [days]="days()" [noBreak]="holidayWeek()" [people]="people()" [planningDays]="weekDaysData()" [overtimes]="weekOvertimes()"
+                     [absences]="weekAbsences()" [meId]="meId()" [today]="today()"
+                     [draft]="draft()" [draftError]="draftProblem()" [draftHoursText]="draftHoursText()"
+                     [draftFor]="targetName()" [manageAllOvertimes]="isAdmin()"
+                     (picked)="onPick($event)" (daysSelected)="onDays($event)" (overtimeClicked)="onOvertime($event)"
+                     (cancelAbsence)="cancel($event)" (draftChange)="draft.set($event)"
+                     (draftConfirm)="confirmDraft()" (draftCancel)="draft.set(null)" />
+      <button type="button" class="week-arrow" (click)="shift(1)" aria-label="Semaine suivante" title="Semaine suivante">
+        <svg viewBox="0 0 24 64" aria-hidden="true"><path d="M6 6 L18 32 L6 58" /></svg>
+      </button>
+      </div>
     } @else {
       <full-calendar [options]="monthOptions()" />
+      @if (preview(); as pv) {
+        <div class="preview" role="tooltip" [style.left.px]="pv.x" [style.top.px]="pv.y" [class.above]="pv.above">
+          <strong>{{ pv.name }}</strong>
+          <span class="preview-date">{{ pv.date }}</span>
+          @for (line of pv.lines; track line) {
+            <span>{{ line }}</span>
+          }
+        </div>
+      }
     }
   `,
   styles: `
-    :host { display: block; }
-    /* mode Édition : fond ambre clair sur toute la zone, grille comprise */
-    :host { padding: 0 12px 12px; border-radius: 12px; transition: background-color 0.2s; }
-    :host(.editing) { background: #fff4d6; --planning-bg: #fffaf0; }
-    .top { display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center; padding-bottom: 4px; }
-    .modes .mat-button-toggle-checked { font-weight: 600; }
-    .modes mat-icon { font-size: 22px; height: 22px; width: 22px; margin-right: 4px; vertical-align: middle; }
-    .available { font: var(--mat-sys-body-medium); }
-    .hint { color: var(--mat-sys-on-surface-variant); margin: 0 0 8px; font: var(--mat-sys-body-medium); }
-    .nav { display: flex; align-items: center; gap: 8px; padding: 6px 0; flex-wrap: wrap; }
-    .title { flex: 1; margin: 0 8px; font: var(--mat-sys-title-large); }
+    :host { display: block; padding: 0 12px 12px; }
+    .hint { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; color: var(--mat-sys-on-surface-variant);
+      font: var(--mat-sys-body-small); }
+    .hint mat-icon { flex: none; font-size: 18px; width: 18px; height: 18px; }
+    .hint .overtime { padding: 0 4px; border-radius: 4px; background: var(--overtime); color: #0b3d02; }
+    .target { width: 200px; --mat-form-field-container-height: 40px; --mat-form-field-container-vertical-padding: 8px; }
+    .acting { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 4px 4px 4px 12px; border-radius: 8px;
+      background: #e8f5e9; border: 1px solid #1f8a0b; font: var(--mat-sys-body-medium); }
+    .acting span { flex: 1; }
+    .legend { padding: 0 6px; border-radius: 4px; border: 1px solid #9aa0a6; background-color: #fff; color: #202124; }
+    .preview { position: fixed; z-index: 1000; display: flex; flex-direction: column; gap: 2px; max-width: 280px;
+      padding: 8px 12px; border-radius: 8px; pointer-events: none; box-shadow: var(--mat-sys-level2);
+      background: var(--mat-sys-inverse-surface); color: var(--mat-sys-inverse-on-surface); font: var(--mat-sys-body-small); }
+    .preview.above { transform: translateY(-100%); }
+    .preview-date { opacity: 0.75; margin-bottom: 2px; }
+    .preview-date::first-letter { text-transform: uppercase; }
+    .legend.absent { background-image: repeating-linear-gradient(135deg, rgba(95, 99, 104, 0.4) 0 3px, transparent 3px 9px); }
+    .nav { display: flex; align-items: center; gap: 8px; padding: 6px 0 4px; flex-wrap: wrap; }
+    .title { margin: 0 4px 0 8px; font: var(--mat-sys-title-large); }
+    .spacer { flex: 1; }
+    /* vue Semaine : grandes flèches fines de part et d'autre de la grille */
+    .week-wrap { display: flex; align-items: stretch; gap: 4px; }
+    .week-wrap app-week-grid { flex: 1; min-width: 0; }
+    .week-arrow { flex: none; width: 44px; padding: 0; border: 0; border-radius: 12px; background: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; color: var(--mat-sys-on-surface-variant);
+      transition: background-color 120ms, color 120ms; }
+    .week-arrow svg { width: 26px; height: 72px; fill: none; stroke: currentColor; stroke-width: 1.6;
+      stroke-linecap: round; stroke-linejoin: round; }
+    .week-arrow:hover { background: var(--mat-sys-surface-container-high); color: var(--mat-sys-primary); }
+    .week-arrow:focus-visible { outline: 2px solid var(--mat-sys-primary); outline-offset: -2px; }
     .holiday { margin-left: 8px; padding: 3px 10px; border-radius: 12px; vertical-align: middle;
       font: var(--mat-sys-label-medium); color: #00504a; background: #b2dfdb; }
   `,
+  host: { '[style.--overtime]': 'overtimeColor' },
 })
 export class PlanningCalendar implements OnInit {
   private readonly api = inject(Api);
   private readonly dialog = inject(MatDialog);
   private readonly snack = inject(MatSnackBar);
-  private readonly store = inject(PeopleStore);
+  protected readonly store = inject(PeopleStore);
+  private readonly auth = inject(AuthService);
+  protected readonly isAdmin = this.auth.isAdmin;
+  protected readonly name = fullName;
+  /** ADMIN : employé pour qui l'on pose des heures sup (null = moi). */
+  protected readonly forUserId = signal<number | null>(null);
+  private readonly targetId = computed(() => this.forUserId() ?? this.meId());
+  protected readonly targetName = computed(() => {
+    const id = this.forUserId();
+    return id == null ? '' : this.nameOf(id);
+  });
   private readonly calendar = viewChild(FullCalendarComponent);
 
-  protected readonly today = toIsoDate(new Date());
-  protected readonly todayDate = () => new Date();
+  protected readonly today = liveToday();
+  protected readonly overtimeColor = OVERTIME_COLOR;
 
   private readonly users = this.store.users;
   protected readonly meId = this.store.meId;
@@ -162,50 +238,58 @@ export class PlanningCalendar implements OnInit {
 
   protected readonly view = signal<View>('week');
   protected readonly anchor = signal(new Date());
-  protected readonly mode = signal<Mode>('read');
-  protected readonly action = signal<EditAction>('absence');
-  protected readonly available = signal<number | null>(null);
-  protected readonly hours = (h: number) => formatHours(h);
+  /** Aperçu de la ligne survolée en vue Mois. */
+  protected readonly preview = signal<(MonthPreview & { x: number; y: number; above: boolean }) | null>(null);
+  /** Plage à placer (absence ou heures sup), avant validation. */
+  protected readonly draft = signal<Draft | null>(null);
+  private readonly available = signal<number | null>(null);
 
-  protected readonly days = computed(() => weekDays(this.anchor()));
+  /** Lundi → samedi : le centre est fermé le dimanche (spec §1). */
+  protected readonly days = computed(() => weekDays(this.anchor()).slice(0, 6));
 
   protected readonly title = computed(() => {
     if (this.view() === 'month') return MONTH_TITLE.format(this.anchor());
     const days = this.days();
     const first = parseIso(days[0]);
-    const last = parseIso(days[6]);
+    const last = parseIso(days.at(-1)!);
     const firstMonth = first.getMonth() === last.getMonth() ? '' : ` ${first.toLocaleDateString('fr-FR', { month: 'short' })}`;
     return `${first.getDate()}${firstMonth} – ${last.getDate()} ${MONTH_TITLE.format(last)}`;
   });
 
   /** Planning de la semaine affichée. */
   private readonly weekPlanning = resource({
-    params: () => (this.view() === 'week' ? { from: this.days()[0], to: addDays(this.days()[6], 1) } : undefined),
+    params: () => (this.view() === 'week' ? { from: this.days()[0], to: addDays(this.days().at(-1)!, 1) } : undefined),
     loader: ({ params }) => this.api.invoke(getPlanning, params),
   });
+  private readonly weekValue = computed(() => (this.weekPlanning.hasValue() ? this.weekPlanning.value() : null));
 
-  /** Dernier planning chargé (semaine ou mois) : sert à connaître mes horaires pour une sélection. */
+  /** Dernier planning chargé (semaine ou mois) : sert à connaître mes horaires et mes demandes. */
   private lastPlanning: Planning | null = null;
 
   protected readonly holidayWeek = computed(
-    () =>
-      this.view() === 'week' &&
-      this.weekPlanning.hasValue() &&
-      this.weekPlanning.value().holidayWeeks.includes(this.days()[0]),
+    () => this.view() === 'week' && !!this.weekValue()?.holidayWeeks.includes(this.days()[0]),
   );
   protected readonly weekDaysData = computed(() =>
-    (this.weekPlanning.hasValue() ? this.weekPlanning.value().days : []).filter((d) => this.peopleIds().has(d.userId)),
+    (this.weekValue()?.days ?? []).filter((d) => this.peopleIds().has(d.userId)),
+  );
+  protected readonly weekOvertimes = computed(() =>
+    (this.weekValue()?.overtimes ?? []).filter((o) => this.peopleIds().has(o.userId)),
   );
   protected readonly weekAbsences = computed(() =>
-    (this.weekPlanning.hasValue() ? this.weekPlanning.value().absences : []).filter((a) =>
-      this.peopleIds().has(a.userId),
-    ),
+    (this.weekValue()?.absences ?? []).filter((a) => this.peopleIds().has(a.userId)),
   );
+
+  protected readonly draftProblem = computed(() => {
+    const draft = this.draft();
+    return draft ? draftError(draft, this.myDay(draft.date, this.weekValue()), this.today()) : null;
+  });
+  protected readonly draftHoursText = computed(() => {
+    const draft = this.draft();
+    return draft ? formatHours(draftHours(draft, this.myDay(draft.date, this.weekValue()))) : '';
+  });
 
   protected readonly monthOptions = computed<CalendarOptions>(() => {
     const ids = this.peopleIds();
-    const edit = this.mode() === 'edit';
-    const action = this.action();
     return {
       plugins: [themePlugin, dayGridPlugin, interactionPlugin],
       locale: frLocale,
@@ -214,17 +298,14 @@ export class PlanningCalendar implements OnInit {
       initialDate: this.anchor(),
       headerToolbar: false,
       height: 'auto',
-      displayEventEnd: true,
       dayMaxEvents: 6,
       moreLinkText: (n: number) => `+ ${n} autre${n > 1 ? 's' : ''}`,
-      // absences, puis mon emploi du temps, puis les autres
-      eventOrder: 'rank,start,title',
-      eventTimeFormat: { hour: '2-digit', minute: '2-digit' },
-      events: (info: EventSourceFuncInfo) => this.loadMonth(info.start, info.end, ids, edit),
-      selectable: edit,
-      select: (info) => void this.onMonthSelect(info, action),
-      eventClick: (info) => this.onMonthClick(info, edit && action === 'hours'),
-      eventDidMount: (info) => this.addCancelButton(info),
+      // lecture seule : vacances, puis moi, puis les autres par heure de début
+      eventOrder: 'rank,sort,title',
+      editable: false,
+      selectable: false,
+      events: (info: EventSourceFuncInfo) => this.loadMonth(info.start, info.end, ids),
+      eventDidMount: (info) => this.attachPreview(info.el, info.event.extendedProps['preview'] as MonthPreview | undefined),
     };
   });
 
@@ -235,7 +316,8 @@ export class PlanningCalendar implements OnInit {
       if (this.view() === 'month') this.calendar()?.getApi().gotoDate(anchor);
     });
     effect(() => {
-      if (this.weekPlanning.hasValue()) this.lastPlanning = this.weekPlanning.value();
+      const value = this.weekValue();
+      if (value) this.lastPlanning = value;
     });
     effect(() => {
       const error = this.weekPlanning.error();
@@ -250,6 +332,8 @@ export class PlanningCalendar implements OnInit {
 
   protected shift(direction: 1 | -1): void {
     const a = this.anchor();
+    this.draft.set(null);
+    this.preview.set(null);
     this.anchor.set(
       this.view() === 'week'
         ? new Date(a.getFullYear(), a.getMonth(), a.getDate() + 7 * direction)
@@ -257,79 +341,156 @@ export class PlanningCalendar implements OnInit {
     );
   }
 
-  // ---------- mes horaires connus (semaine / mois chargés) ----------
-
-  private myDays(date: string): PlanningDay[] {
-    return this.lastPlanning?.days.filter((d) => d.userId === this.meId() && d.date === date) ?? [];
+  protected goToday(): void {
+    this.draft.set(null);
+    this.anchor.set(new Date());
   }
 
-  private myTypical(date: string): WorkedRange[] {
-    return this.myDays(date)
-      .filter((d) => d.specialDayId == null)
-      .map((d) => ({ start: d.startTime, end: d.endTime }));
+  protected setView(view: View): void {
+    this.preview.set(null);
+    this.draft.set(null);
+    this.view.set(view);
   }
 
-  private myWorked(date: string): WorkedRange[] {
-    return mergeRanges(this.myDays(date).map((d) => ({ start: d.startTime, end: d.endTime })));
+  // ---------- mon emploi du temps (journée type + heures sup en attente / acceptées) ----------
+
+  /** Emploi du temps de la personne pour qui l'on agit (moi, ou l'employé choisi par l'admin). */
+  private myDay(date: string, planning: Planning | null = this.lastPlanning): MyDay {
+    const who = this.targetId();
+    const range = (r: { startTime: string; endTime: string }) => ({ start: toMinutes(r.startTime), end: toMinutes(r.endTime) });
+    return {
+      typical: (planning?.days ?? []).filter((d) => d.userId === who && d.date === date).map(range),
+      overtimes: (planning?.overtimes ?? [])
+        .filter((o) => o.userId === who && o.date === date && ACTIVE.has(o.status))
+        .map(range),
+      noBreak: !!planning?.holidayWeeks.includes(weekDays(parseIso(date))[0]),
+    };
   }
 
-  // ---------- poser une absence ----------
+  /** ADMIN : choisit pour qui poser des heures sup (null = moi) ; sa colonne est affichée. */
+  protected setTarget(userId: number | null): void {
+    this.draft.set(null);
+    this.forUserId.set(userId === this.meId() ? null : userId);
+    if (userId != null && userId !== this.meId() && !this.store.selected().has(userId)) this.store.toggle(userId, true);
+  }
 
-  protected onRange(selection: RangeSelection): void {
-    if (this.action() === 'hours') {
-      void this.addHours(selection.date, selection);
+  // ---------- plage à placer (vue Semaine) ----------
+
+  protected onPick(pick: GridPick): void {
+    const day = this.myDay(pick.date);
+    const draft = pick.click
+      ? draftAt(pick.date, pick.start, day)
+      : draftFromSelection(pick.date, { start: pick.start, end: pick.end }, day);
+    if (this.forUserId() != null && draft?.kind === 'absence') {
+      this.notify(`Pour ${this.targetName()}, seules des heures sup se posent : cliquez en dehors de sa journée type.`);
       return;
     }
-    void this.askRangeAbsence(selection);
+    if (!draft) {
+      this.notify('Rien à poser ici : choisissez une heure en dehors de la pause de midi et des autres demandes.');
+      return;
+    }
+    this.draft.set(draft);
   }
 
+  protected async confirmDraft(): Promise<void> {
+    const draft = this.draft();
+    if (!draft || this.draftProblem()) return;
+    const start = toTime(draft.start);
+    const end = toTime(draft.end);
+    const summary = `${LONG_DATE.format(parseIso(draft.date))} de ${start} à ${end}`;
+    const hours = draftHours(draft, this.myDay(draft.date));
+    if (draft.kind === 'absence') {
+      const result = await this.openAbsenceDialog({ summary, hours, available: this.available() });
+      if (result && (await this.sendAbsence({ ...result, startDate: draft.date, startTime: start, endTime: end }))) {
+        this.draft.set(null);
+      }
+      return;
+    }
+    const forUser = this.forUserId();
+    const data: OvertimeDialogData = { summary, hours, forName: forUser != null ? this.targetName() : undefined };
+    const reason = await firstValueFrom(
+      this.dialog.open<OvertimeDialog, OvertimeDialogData, string>(OvertimeDialog, { data }).afterClosed(),
+    );
+    if (!reason) return;
+    const body = { date: draft.date, startTime: start, endTime: end, reason };
+    try {
+      if (forUser != null) {
+        const created = await this.api.invoke(adminDeclareOvertime, { userId: forUser, body });
+        this.notify(`${formatHours(created.hours)} d'heures sup ajoutées pour ${this.targetName()} (acceptées)`);
+      } else {
+        const created = await this.api.invoke(declareOvertime, { body });
+        this.notify(`${formatHours(created.hours)} d'heures sup demandées — en attente de validation`);
+      }
+      this.draft.set(null);
+    } catch (error) {
+      this.notify(errorMessage(error));
+    }
+    this.refresh();
+  }
+
+  /** Clic sur une de mes heures sup : annuler la demande tant qu'elle est en attente. */
+  protected async onOvertime(id: number): Promise<void> {
+    const overtime = this.lastPlanning?.overtimes.find((o) => o.id === id);
+    if (!overtime) return;
+    const when = `du ${frDate(overtime.date)} de ${overtime.startTime} à ${overtime.endTime}`;
+    if (overtime.userId === this.meId() && overtime.status === 'PENDING') {
+      const confirmed = await this.confirm({
+        title: "Annuler la demande d'heures sup",
+        message: `Annuler votre demande d'heures sup ${when} ?`,
+        confirmLabel: 'Annuler la demande',
+      });
+      if (confirmed) await this.change(() => this.api.invoke(cancelOvertime, { id }), "Demande d'heures sup annulée");
+      return;
+    }
+    if (!this.isAdmin()) {
+      this.notify('Ces heures sup sont déjà acceptées : elles ne peuvent plus être annulées.');
+      return;
+    }
+    // admin : retirer les heures sup de n'importe qui, en attente ou acceptées
+    const name = this.nameOf(overtime.userId);
+    const confirmed = await this.confirm({
+      title: 'Retirer des heures sup',
+      message:
+        `Retirer les heures sup de ${name} ${when} ?` +
+        (overtime.status === 'APPROVED' ? ' Elles sont acceptées : elles seront retirées de son solde.' : ''),
+      confirmLabel: 'Retirer',
+    });
+    if (confirmed) await this.change(() => this.api.invoke(adminCancelOvertime, { id }), 'Heures sup retirées');
+  }
+
+  private async change(call: () => Promise<unknown>, success: string): Promise<void> {
+    try {
+      await call();
+      this.notify(success);
+    } catch (error) {
+      this.notify(errorMessage(error));
+    }
+    this.refresh();
+  }
+
+  private nameOf(userId: number): string {
+    const user = this.users().find((u) => u.id === userId);
+    return user ? fullName(user) : `#${userId}`;
+  }
+
+  // ---------- absences à la journée ----------
+
   protected onDays(selection: DaysSelection): void {
-    if (this.action() === 'hours') {
-      void this.addHours(selection.startDate);
+    if (this.forUserId() != null) {
+      this.notify(`Pour ${this.targetName()}, seules des heures sup se posent (pas d'absence pour autrui).`);
       return;
     }
     void this.askDaysAbsence(selection.startDate, selection.endDate);
   }
 
-  private async askRangeAbsence(selection: RangeSelection): Promise<void> {
-    if (selection.date < this.today) {
-      this.notify("Une absence se pose à partir d'aujourd'hui.");
-      return;
-    }
-    const worked = this.myWorked(selection.date);
-    // rognée à mes horaires ; elle peut enjamber la pause ou une coupure (non comptées)
-    const wanted = { start: toMinutes(selection.start), end: toMinutes(selection.end) };
-    const clipped = worked
-      .map((range) => clipToDay(wanted, range))
-      .filter((range) => range !== null);
-    if (!clipped.length) {
-      this.notify(
-        worked.length
-          ? `La sélection doit toucher vos horaires de ce jour (${worked.map((r) => `${r.start}–${r.end}`).join(', ')}).`
-          : "Ce jour n'est pas travaillé pour vous.",
-      );
-      return;
-    }
-    const start = toTime(Math.min(...clipped.map((r) => r.start)));
-    const end = toTime(Math.max(...clipped.map((r) => r.end)));
-    const result = await this.openAbsenceDialog({
-      summary: `${LONG_DATE.format(parseIso(selection.date))} de ${start} à ${end}`,
-      hours: Math.round(workedMinutes(worked, start, end) / 15) / 4,
-      available: this.available(),
-    });
-    if (result) {
-      await this.sendAbsence({ ...result, startDate: selection.date, startTime: start, endTime: end });
-    }
-  }
-
   private async askDaysAbsence(startDate: string, endDate: string): Promise<void> {
-    if (startDate < this.today) {
+    if (startDate < this.today()) {
       this.notify("Une absence se pose à partir d'aujourd'hui.");
       return;
     }
     let minutes = 0;
     for (let date = startDate; date <= endDate; date = addDays(date, 1)) {
-      for (const range of this.myWorked(date)) minutes += toMinutes(range.end) - toMinutes(range.start);
+      for (const range of this.myDay(date).typical) minutes += range.end - range.start;
     }
     if (minutes === 0) {
       this.notify('Aucun jour travaillé pour vous sur cette période.');
@@ -353,33 +514,30 @@ export class PlanningCalendar implements OnInit {
     );
   }
 
-  private async sendAbsence(body: AbsenceInput): Promise<void> {
+  private async sendAbsence(body: AbsenceInput): Promise<boolean> {
+    let sent = false;
     try {
       const created = await this.api.invoke(requestAbsence, { body });
       this.notify(`Absence de ${formatHours(created.hours)} demandée — en attente de validation`);
+      sent = true;
     } catch (error) {
       this.notify(errorMessage(error));
     }
     this.refresh();
+    return sent;
   }
 
   /** Suppression d'une de mes absences ; confirmation si elle est déjà acceptée (spec §3). */
   protected async cancel(id: number): Promise<void> {
-    const absence = this.findAbsence(id);
+    const absence = this.lastPlanning?.absences.find((a) => a.id === id);
     if (absence?.status === 'APPROVED') {
-      const confirmed = await firstValueFrom(
-        this.dialog
-          .open<ConfirmDialog, ConfirmDialogData, boolean>(ConfirmDialog, {
-            data: {
-              title: 'Supprimer une absence acceptée',
-              message:
-                `Supprimer votre absence acceptée ${this.describe(absence)} ? ` +
-                'Si c’est une récupération, ses heures seront rendues à votre solde.',
-              confirmLabel: 'Supprimer',
-            },
-          })
-          .afterClosed(),
-      );
+      const confirmed = await this.confirm({
+        title: 'Supprimer une absence acceptée',
+        message:
+          `Supprimer votre absence acceptée ${this.describe(absence)} ? ` +
+          'Si c’est une récupération, ses heures seront rendues à votre solde.',
+        confirmLabel: 'Supprimer',
+      });
       if (!confirmed) return;
     }
     try {
@@ -391,87 +549,24 @@ export class PlanningCalendar implements OnInit {
     this.refresh();
   }
 
-  private findAbsence(id: number): PlanningAbsence | undefined {
-    return this.lastPlanning?.absences.find((a) => a.id === id);
-  }
-
   private describe(a: PlanningAbsence): string {
-    const date = (iso: string) => iso.split('-').reverse().join('/');
-    if (a.startTime) return `du ${date(a.startDate)} de ${a.startTime} à ${a.endTime}`;
-    return a.startDate === a.endDate ? `du ${date(a.startDate)}` : `du ${date(a.startDate)} au ${date(a.endDate)}`;
+    if (a.startTime) return `du ${frDate(a.startDate)} de ${a.startTime} à ${a.endTime}`;
+    return a.startDate === a.endDate ? `du ${frDate(a.startDate)}` : `du ${frDate(a.startDate)} au ${frDate(a.endDate)}`;
   }
 
-  // ---------- ajouter des heures (uniquement à mon emploi du temps) ----------
-
-  protected onOwnDay({ date, extraId }: OwnDayClick): void {
-    if (extraId == null) {
-      this.notify('La journée type ne se modifie pas ici : glissez en dehors pour ajouter des heures.');
-      return;
-    }
-    void this.editExtra(date, extraId);
-  }
-
-  private async addHours(date: string, selection?: RangeSelection): Promise<void> {
-    if (!this.canChange(date)) return;
-    const typical = this.myTypical(date);
-    const range = selection ? outsideTypical(selection, typical) : defaultExtra(typical);
-    if (!range) {
-      this.notify('Sélectionnez une plage en dehors de votre journée type et de la pause de midi (12:30–13:30).');
-      return;
-    }
-    const result = await this.openDayDialog({ date, startTime: range.start, endTime: range.end });
-    if (result?.action === 'save') {
-      await this.change(() => this.api.invoke(createSpecialDay, { body: result.input }), 'Heures ajoutées');
-    }
-  }
-
-  private async editExtra(date: string, id: number): Promise<void> {
-    const extra = this.myDays(date).find((d) => d.specialDayId === id);
-    if (!extra || !this.canChange(date)) return;
-    const result = await this.openDayDialog({ date, startTime: extra.startTime, endTime: extra.endTime }, id);
-    if (result?.action === 'save') {
-      await this.change(() => this.api.invoke(updateSpecialDay, { id, body: result.input }), 'Heures ajoutées modifiées');
-    } else if (result?.action === 'remove') {
-      await this.change(() => this.api.invoke(deleteSpecialDay, { id }), 'Heures ajoutées retirées');
-    }
-  }
-
-  private canChange(date: string): boolean {
-    if (date < this.today) this.notify('Les jours passés ne sont plus modifiables.');
-    return date >= this.today;
-  }
-
-  private openDayDialog(initial: DayDialogData['initial'], extraId?: number): Promise<DayDialogResult | undefined> {
-    const user = this.users().find((u) => u.id === this.meId());
-    if (!user) return Promise.resolve(undefined);
-    const data: DayDialogData = {
-      user,
-      initial,
-      existing: extraId != null,
-      lockDate: true,
-      dayOf: (date) => ({
-        typical: this.myTypical(date),
-        others: this.myDays(date)
-          .filter((d) => d.specialDayId != null && d.specialDayId !== extraId)
-          .map((d) => ({ start: d.startTime, end: d.endTime })),
-      }),
-    };
-    return firstValueFrom(this.dialog.open<DayDialog, DayDialogData, DayDialogResult>(DayDialog, { data }).afterClosed());
-  }
-
-  private async change(call: () => Promise<unknown>, success: string): Promise<void> {
-    try {
-      await call();
-      this.notify(success);
-    } catch (error) {
-      this.notify(errorMessage(error));
-    }
-    this.refresh();
+  private confirm(data: ConfirmDialogData): Promise<boolean | undefined> {
+    return firstValueFrom(
+      this.dialog.open<ConfirmDialog, ConfirmDialogData, boolean>(ConfirmDialog, { data }).afterClosed(),
+    );
   }
 
   // ---------- vue Mois (FullCalendar) ----------
 
-  private async loadMonth(start: Date, end: Date, ids: Set<number>, edit: boolean): Promise<EventInput[]> {
+  /**
+   * Vue Mois en lecture seule : une ligne par personne qui travaille ce jour-là (journée type ou heures sup), avec
+   * prénom nom et heures. Fond blanc ; rayé gris s'il y a une absence ; vert fluo s'il y a des heures sup.
+   */
+  private async loadMonth(start: Date, end: Date, ids: Set<number>): Promise<EventInput[]> {
     try {
       const planning = await this.api.invoke(getPlanning, { from: toIsoDate(start), to: toIsoDate(end) });
       this.lastPlanning = planning;
@@ -479,22 +574,62 @@ export class PlanningCalendar implements OnInit {
         const user = this.users().find((u) => u.id === userId);
         return user ? fullName(user) : `#${userId}`;
       };
-      // une ligne par personne et par jour : du premier début à la dernière fin
-      const byDay = new Map<string, PlanningDay[]>();
-      for (const d of planning.days.filter((day) => ids.has(day.userId))) {
-        const key = `${d.userId}|${d.date}`;
-        byDay.set(key, [...(byDay.get(key) ?? []), d]);
-      }
-      const days: EventInput[] = [...byDay.values()].map((parts) => ({
-        title: label(parts[0].userId),
-        start: `${parts[0].date}T${parts.map((d) => d.startTime).sort()[0]}`,
-        end: `${parts[0].date}T${parts.map((d) => d.endTime).sort().at(-1)}`,
-        color: colorFor(parts[0].userId),
-        extendedProps: { kind: 'day', parts, rank: parts[0].userId === this.meId() ? 2 : 3 },
-      }));
-      const absences: EventInput[] = planning.absences
-        .filter((a) => ids.has(a.userId))
-        .map((a) => this.monthAbsence(a, label(a.userId), edit));
+      const lines = new Map<string, { userId: number; date: string; work: PlanningDay[]; overtimes: PlanningOvertime[] }>();
+      const line = (userId: number, date: string) => {
+        const key = `${userId}|${date}`;
+        if (!lines.has(key)) lines.set(key, { userId, date, work: [], overtimes: [] });
+        return lines.get(key)!;
+      };
+      planning.days.filter((d) => ids.has(d.userId)).forEach((d) => line(d.userId, d.date).work.push(d));
+      planning.overtimes.filter((o) => ids.has(o.userId)).forEach((o) => line(o.userId, o.date).overtimes.push(o));
+      const absencesOf = (userId: number, date: string) =>
+        planning.absences.filter((a) => a.userId === userId && a.startDate <= date && date <= a.endDate);
+      const status = (s: string) => (s === 'PENDING' ? 'en attente' : 'acceptée');
+
+      const days: EventInput[] = [...lines.values()].map(({ userId, date, work, overtimes }) => {
+        const hours = work.length
+          ? `${work.map((d) => d.startTime).sort()[0]}–${work.map((d) => d.endTime).sort().at(-1)}`
+          : '';
+        const extra = overtimes
+          .sort((a, b) => a.startTime.localeCompare(b.startTime))
+          .map((o) => `${o.startTime}–${o.endTime}`)
+          .join(', ');
+        const absences = absencesOf(userId, date);
+        const isAbsent = absences.length > 0;
+        // aperçu au survol : le détail complet, la ligne pouvant être coupée
+        const preview = {
+          name: label(userId),
+          date: LONG_DATE.format(parseIso(date)),
+          lines: [
+            work.length ? `Horaires : ${[...work].sort((a, b) => a.startTime.localeCompare(b.startTime)).map((d) => `${d.startTime}–${d.endTime}`).join(' / ')}` : 'Jour non travaillé',
+            ...overtimes.map(
+              (o) =>
+                `Heures sup : ${o.startTime}–${o.endTime} (${o.status === 'PENDING' ? 'en attente' : 'acceptées'})` +
+                (o.createdBy != null ? ', saisies par l’admin' : ''),
+            ),
+            ...absences.map(
+              (a) => `Absence : ${a.startTime ? `${a.startTime}–${a.endTime}` : 'journée entière'} (${status(a.status)})`,
+            ),
+          ],
+        };
+        return {
+          title: [label(userId), hours, extra && `+ heures sup ${extra}`].filter(Boolean).join(' · '),
+          start: date,
+          allDay: true,
+          display: 'block',
+          // couleur de l'employé pour le liseré (le fond est imposé par les classes pl-day*)
+          color: colorFor(userId),
+          contrastColor: '#202124',
+          className: ['pl-day', overtimes.length ? 'pl-day-overtime' : '', isAbsent ? 'pl-day-absent' : '']
+            .join(' ')
+            .trim(),
+          extendedProps: {
+            rank: userId === this.meId() ? 1 : 2,
+            sort: work[0]?.startTime ?? overtimes[0]?.startTime ?? '',
+            preview,
+          },
+        };
+      });
       const holidays: EventInput[] = planning.holidayWeeks.map((monday) => ({
         title: 'Vacances scolaires',
         start: monday,
@@ -502,69 +637,36 @@ export class PlanningCalendar implements OnInit {
         allDay: true,
         color: '#b2dfdb',
         contrastColor: '#00504a',
-        extendedProps: { kind: 'holiday', rank: 0 },
+        extendedProps: { rank: 0 },
       }));
-      return [...holidays, ...absences, ...days];
+      return [...holidays, ...days];
     } catch (error) {
       this.notify(errorMessage(error, 'Impossible de charger le planning'));
       return [];
     }
   }
 
-  private monthAbsence(a: PlanningAbsence, name: string, edit: boolean): EventInput {
-    const pending = a.status === 'PENDING';
-    const timed = a.startTime && a.endTime;
-    return {
-      title: `${name} — ${pending ? 'absence en attente' : 'absent·e'}`,
-      start: timed ? `${a.startDate}T${a.startTime}` : a.startDate,
-      end: timed ? `${a.startDate}T${a.endTime}` : addDays(a.endDate, 1),
-      allDay: !timed,
-      // journée(s) entière(s) : neutre (gris) et barrée ; plage horaire : teinte de l'employé
-      color: timed ? tint(colorFor(a.userId)) : '#5f6368',
-      contrastColor: timed ? '#202124' : '#ffffff',
-      className: [pending ? 'pl-absence-pending' : '', timed ? '' : 'pl-absence-day'].join(' ').trim(),
-      extendedProps: {
-        kind: 'absence',
-        rank: 1,
-        absence: a,
-        cancellable: edit && a.userId === this.meId() && a.startDate >= this.today,
-      },
-    };
-  }
-
-  private async onMonthSelect(info: DateSelectInfo, action: EditAction): Promise<void> {
-    this.calendar()?.getApi().unselect();
-    const start = toIsoDate(info.start);
-    if (action === 'hours') await this.addHours(start);
-    else await this.askDaysAbsence(start, addDays(toIsoDate(info.end), -1));
-  }
-
-  private onMonthClick(info: EventClickInfo, hoursMode: boolean): void {
-    const props = info.event.extendedProps as { kind?: string; parts?: PlanningDay[] };
-    if (hoursMode && props.parts && props.parts[0].userId === this.meId()) {
-      const extras = props.parts.filter((d) => d.specialDayId != null);
-      if (extras.length > 1) this.notify('Plusieurs plages ajoutées ce jour : modifiez-les en vue Semaine.');
-      else this.onOwnDay({ date: props.parts[0].date, extraId: extras[0]?.specialDayId ?? null });
-    }
-  }
-
-  /** Croix « supprimer » sur mes absences pas encore commencées (vue Mois, mode Édition). */
-  private addCancelButton(info: EventDisplayInfo & { el: HTMLElement }): void {
-    const props = info.event.extendedProps as { kind?: string; absence?: PlanningAbsence; cancellable?: boolean };
-    if (props.kind !== 'absence' || !props.cancellable || !props.absence) return;
-    const id = props.absence.id;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'pl-cancel';
-    button.textContent = '×';
-    button.title = 'Supprimer cette absence';
-    button.setAttribute('aria-label', 'Supprimer cette absence');
-    button.addEventListener('pointerdown', (event) => event.stopPropagation());
-    button.addEventListener('click', (event) => {
-      event.stopPropagation();
-      void this.cancel(id);
+  /** Aperçu au survol d'une ligne de la vue Mois (sous la ligne, ou au-dessus en bas de l'écran). */
+  private attachPreview(el: HTMLElement, preview: MonthPreview | undefined): void {
+    if (!preview) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    el.addEventListener('mouseenter', () => {
+      // petit délai : l'aperçu ne surgit pas au simple passage de la souris
+      timer = setTimeout(() => {
+        const rect = el.getBoundingClientRect();
+        const above = rect.bottom > window.innerHeight - 140;
+        this.preview.set({
+          ...preview,
+          x: Math.min(rect.left, window.innerWidth - 290),
+          y: above ? rect.top - 4 : rect.bottom + 4,
+          above,
+        });
+      }, PREVIEW_DELAY_MS);
     });
-    info.el.appendChild(button);
+    el.addEventListener('mouseleave', () => {
+      clearTimeout(timer);
+      this.preview.set(null);
+    });
   }
 
   // ---------- commun ----------

@@ -17,12 +17,13 @@ import com.erp.leave.LeaveDtos.AdjustmentInput;
 import com.erp.leave.LeaveDtos.BalanceDto;
 import com.erp.leave.LeaveDtos.DecisionInput;
 import com.erp.leave.LeaveDtos.RequestsDto;
+import com.erp.overtime.OvertimeDtos.OvertimeInput;
 import com.erp.overtime.OvertimeDtos.OvertimeRequestDto;
 import com.erp.overtime.OvertimeService;
 
 import jakarta.validation.Valid;
 
-/** Validation des demandes et ajustements de solde — ADMIN uniquement. */
+/** Validation des demandes, heures sup saisies pour un employé et ajustements de solde — ADMIN uniquement. */
 @RestController
 @RequestMapping("/api/admin")
 public class AdminRequestsController {
@@ -50,6 +51,20 @@ public class AdminRequestsController {
 	public OvertimeRequestDto decideOvertime(@AuthenticationPrincipal AuthenticatedUser admin, @PathVariable Long id,
 			@Valid @RequestBody DecisionInput input) {
 		return overtimes.decide(admin, id, input.approved(), input.comment());
+	}
+
+	@PostMapping("/overtime-requests/{id}/cancel")
+	@PreAuthorize("hasRole('ADMIN')")
+	public OvertimeRequestDto cancelOvertime(@AuthenticationPrincipal AuthenticatedUser admin, @PathVariable Long id) {
+		return overtimes.withdraw(admin, id);
+	}
+
+	@PostMapping("/users/{userId}/overtime-requests")
+	@ResponseStatus(HttpStatus.CREATED)
+	@PreAuthorize("hasRole('ADMIN')")
+	public OvertimeRequestDto declareOvertime(@AuthenticationPrincipal AuthenticatedUser admin,
+			@PathVariable Long userId, @Valid @RequestBody OvertimeInput input) {
+		return overtimes.createFor(admin, userId, input);
 	}
 
 	@PostMapping("/absence-requests/{id}/decision")

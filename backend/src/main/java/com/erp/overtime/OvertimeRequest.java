@@ -2,6 +2,7 @@ package com.erp.overtime;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
 
 import org.springframework.http.HttpStatus;
@@ -18,7 +19,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Déclaration d'heures supplémentaires (spec §2). */
+/** Demande d'heures supplémentaires, posée sur le planning avec sa plage horaire (spec §2). */
 @Entity
 @Table(name = "overtime_request")
 public class OvertimeRequest {
@@ -39,6 +40,14 @@ public class OvertimeRequest {
 	@Column(nullable = false)
 	private String reason;
 
+	/** Null pour les anciennes déclarations sans plage horaire. */
+	private LocalTime startTime;
+
+	private LocalTime endTime;
+
+	/** Admin qui a saisi ces heures pour l'employé ; null = demandées par l'employé lui-même. */
+	private Long createdBy;
+
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false)
 	private RequestStatus status = RequestStatus.PENDING;
@@ -55,11 +64,35 @@ public class OvertimeRequest {
 	protected OvertimeRequest() {
 	}
 
-	OvertimeRequest(Long userId, LocalDate workDate, BigDecimal hours, String reason) {
+	OvertimeRequest(Long userId, LocalDate workDate, LocalTime startTime, LocalTime endTime, BigDecimal hours,
+			String reason) {
 		this.userId = userId;
 		this.workDate = workDate;
+		this.startTime = startTime;
+		this.endTime = endTime;
 		this.hours = hours;
 		this.reason = reason;
+	}
+
+	/** Heures sup saisies par un admin pour un employé : acceptées directement (spec §1). */
+	static OvertimeRequest approvedBy(Long adminId, Long userId, LocalDate workDate, LocalTime startTime,
+			LocalTime endTime, BigDecimal hours, String reason) {
+		OvertimeRequest request = new OvertimeRequest(userId, workDate, startTime, endTime, hours, reason);
+		request.createdBy = adminId;
+		request.status = RequestStatus.APPROVED;
+		request.decidedBy = adminId;
+		request.decidedAt = OffsetDateTime.now();
+		return request;
+	}
+
+	/** Retrait par un admin : depuis PENDING ou APPROVED (409 sinon) ; une heure sup acceptée sort du solde. */
+	void withdraw(Long adminId) {
+		if (status != RequestStatus.PENDING && status != RequestStatus.APPROVED) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, "Ces heures sup sont déjà refusées ou annulées");
+		}
+		this.status = RequestStatus.CANCELLED;
+		this.decidedBy = adminId;
+		this.decidedAt = OffsetDateTime.now();
 	}
 
 	/** Transition depuis PENDING uniquement (409 sinon). */
@@ -85,6 +118,18 @@ public class OvertimeRequest {
 
 	public LocalDate getWorkDate() {
 		return workDate;
+	}
+
+	public LocalTime getStartTime() {
+		return startTime;
+	}
+
+	public LocalTime getEndTime() {
+		return endTime;
+	}
+
+	public Long getCreatedBy() {
+		return createdBy;
 	}
 
 	public BigDecimal getHours() {

@@ -1,6 +1,7 @@
 package com.erp.schedule;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
@@ -35,33 +36,21 @@ public final class ScheduleDtos {
 
 	}
 
-	/** days = semaine classique ; holidayDays = semaine de vacances, null = à compléter (reprend la classique). */
+	/** days = semaine classique ; holidayDays = semaine de vacances scolaires (une plage par jour, sans pause). */
 	public record UserScheduleDto(@NotNull BigDecimal weeklyHours,
 			@NotNull @Size(min = 7, max = 7) List<@Valid @NotNull TypicalDayDto> days,
-			@Size(min = 7, max = 7) List<@Valid @NotNull TypicalDayDto> holidayDays) {
+			@NotNull @Size(min = 7, max = 7) List<@Valid @NotNull TypicalDayDto> holidayDays) {
 	}
 
-	/** Plage d'heures ajoutée à un jour, en dehors de la journée type. */
-	public record SpecialDayInput(@NotNull Long userId, @NotNull LocalDate date, @NotNull LocalTime startTime,
-			@NotNull LocalTime endTime) {
-	}
-
-	public record SpecialDayDto(Long id, Long userId, LocalDate date, @JsonFormat(pattern = "HH:mm") LocalTime startTime,
-			@JsonFormat(pattern = "HH:mm") LocalTime endTime) {
-
-		static SpecialDayDto of(SpecialDay day) {
-			TimeRange range = day.range();
-			return new SpecialDayDto(day.getId(), day.getUserId(), day.getDayDate(), range.start(), range.end());
-		}
-
-	}
-
-	/**
-	 * Plage travaillée d'un employé : journée type (specialDayId null, matin et après-midi) ou heures ajoutées
-	 * (specialDayId renseigné, plusieurs possibles).
-	 */
+	/** Plage de la journée type d'un employé (matin ou après-midi). */
 	public record PlanningDayDto(Long userId, LocalDate date, @JsonFormat(pattern = "HH:mm") LocalTime startTime,
-			@JsonFormat(pattern = "HH:mm") LocalTime endTime, Long specialDayId) {
+			@JsonFormat(pattern = "HH:mm") LocalTime endTime) {
+	}
+
+	/** Heures sup posées sur le planning (PENDING ou APPROVED), visibles par tous, sans motif. */
+	public record PlanningOvertimeDto(Long id, Long userId, LocalDate date,
+			@JsonFormat(pattern = "HH:mm") LocalTime startTime, @JsonFormat(pattern = "HH:mm") LocalTime endTime,
+			RequestStatus status, Long createdBy) {
 	}
 
 	/**
@@ -74,8 +63,17 @@ public final class ScheduleDtos {
 	}
 
 	/** holidayWeeks : lundis des semaines de vacances scolaires touchant la période. */
-	public record PlanningDto(List<PlanningDayDto> days, List<PlanningAbsenceDto> absences,
+	public record PlanningDto(List<PlanningDayDto> days, List<PlanningOvertimeDto> overtimes,
+			List<PlanningAbsenceDto> absences,
 			List<LocalDate> holidayWeeks) {
+	}
+
+	/** Validation du calendrier des vacances scolaires (spec §1) : en retard si non validé à 6 mois. */
+	public record SchoolHolidayCalendarDto(LocalDate validatedUntil, Long validatedBy, Instant validatedAt,
+			LocalDate requiredUntil, boolean late) {
+	}
+
+	public record SchoolHolidayValidationInput(@NotNull LocalDate validatedUntil) {
 	}
 
 }

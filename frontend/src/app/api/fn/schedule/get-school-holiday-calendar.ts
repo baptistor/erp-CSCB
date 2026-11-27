@@ -7,13 +7,13 @@ import { filter, map } from 'rxjs/operators';
 import { StrictHttpResponse } from '../../strict-http-response';
 import { RequestBuilder } from '../../request-builder';
 
-import { Requests } from '../../models/requests';
+import { SchoolHolidayCalendar } from '../../models/school-holiday-calendar';
 
-export interface GetMyRequests$Params {
+export interface GetSchoolHolidayCalendar$Params {
 }
 
-export function getMyRequests(http: HttpClient, rootUrl: string, params?: GetMyRequests$Params, context?: HttpContext): Observable<StrictHttpResponse<Requests>> {
-  const rb = new RequestBuilder(rootUrl, getMyRequests.PATH, 'get');
+export function getSchoolHolidayCalendar(http: HttpClient, rootUrl: string, params?: GetSchoolHolidayCalendar$Params, context?: HttpContext): Observable<StrictHttpResponse<SchoolHolidayCalendar>> {
+  const rb = new RequestBuilder(rootUrl, getSchoolHolidayCalendar.PATH, 'get');
   if (params) {
   }
 
@@ -22,9 +22,9 @@ export function getMyRequests(http: HttpClient, rootUrl: string, params?: GetMyR
   ).pipe(
     filter((r: any): r is HttpResponse<any> => r instanceof HttpResponse),
     map((r: HttpResponse<any>) => {
-      return r as StrictHttpResponse<Requests>;
+      return r as StrictHttpResponse<SchoolHolidayCalendar>;
     })
   );
 }
 
-getMyRequests.PATH = '/me/requests';
+getSchoolHolidayCalendar.PATH = '/school-holiday-calendar';

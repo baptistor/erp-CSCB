@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, input, OnInit, output, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, input, OnInit, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, FormGroup, NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
@@ -46,8 +46,16 @@ export interface DayValue {
 
 type Week = 'classic' | 'holiday';
 
-/** Erreur d'un jour (spec §1) : fin > début, matin fini à 12:30 au plus tard, après-midi à partir de 13:30. */
-export function dayError(day: DayValue): string | null {
+
+/** Le centre est fermé le dimanche : il n'apparaît pas (envoyé non travaillé). */
+const OPEN_DAYS = DAY_LABELS.slice(0, 6);
+
+/**
+ * Erreur d'un jour (spec §1) : fin > début ; semaine classique : matin fini à 12:30 au plus tard, après-midi à partir de
+ * 13:30 ; semaine de vacances : une seule plage (champs « matin »), sans pause.
+ */
+export function dayError(day: DayValue, holiday = false): string | null {
+  if (holiday) return day.morning ? rangeError(day.morningStart, day.morningEnd) : null;
   if (day.morning) {
     const error = rangeError(day.morningStart, day.morningEnd);
     if (error) return `Matin : ${error}`;
@@ -62,18 +70,18 @@ export function dayError(day: DayValue): string | null {
 }
 
 /** Durée d'un jour de la semaine type, en minutes, hors pause (0 si non travaillé ou invalide). */
-export function dayMinutes(day: DayValue): number {
-  if (dayError(day)) return 0;
+export function dayMinutes(day: DayValue, holiday = false): number {
+  if (dayError(day, holiday)) return 0;
   return (
     (day.morning ? toMinutes(day.morningEnd) - toMinutes(day.morningStart) : 0) +
-    (day.afternoon ? toMinutes(day.afternoonEnd) - toMinutes(day.afternoonStart) : 0)
+    (!holiday && day.afternoon ? toMinutes(day.afternoonEnd) - toMinutes(day.afternoonStart) : 0)
   );
 }
 
 /** Semaine valide : chaque jour valide, et total exactement égal au contrat. */
-export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
-  if (!isValidWeeklyHours(weeklyHours) || days.some((d) => dayError(d))) return false;
-  return contractStatus(days.reduce((sum, d) => sum + dayMinutes(d), 0), weeklyHours!).kind === 'ok';
+export function weekOk(days: DayValue[], weeklyHours: number | null, holiday = false): boolean {
+  if (!isValidWeeklyHours(weeklyHours) || days.some((d) => dayError(d, holiday))) return false;
+  return contractStatus(days.reduce((sum, d) => sum + dayMinutes(d, holiday), 0), weeklyHours!).kind === 'ok';
 }
 
 /**
@@ -122,17 +130,10 @@ export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
 
         <mat-button-toggle-group class="weeks" [value]="week()" (change)="show($event.value)" aria-label="Type de semaine">
           <mat-button-toggle value="classic">Semaine classique</mat-button-toggle>
-          <mat-button-toggle value="holiday">
-            Vacances scolaires
-            @if (!holidayFilled()) {
-              <span class="todo">À compléter</span>
-            }
-          </mat-button-toggle>
+          <mat-button-toggle value="holiday">Vacances scolaires</mat-button-toggle>
         </mat-button-toggle-group>
-        @if (week() === 'holiday' && !holidayFilled()) {
-          <p class="hint">
-            Semaine de vacances pas encore renseignée : elle reprend la semaine classique. Adaptez-la puis enregistrez.
-          </p>
+        @if (week() === 'holiday') {
+          <p class="hint">Pas de pause de midi en semaine de vacances : une seule plage par jour.</p>
         }
 
         @if (status(); as st) {
@@ -144,14 +145,19 @@ export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
 
         <table class="week">
           <thead>
-            <tr><th>Jour</th><th>Matin (jusqu'à 12:30)</th><th>Après-midi (dès 13:30)</th><th class="num">Durée</th><th></th></tr>
+            @if (week() === 'holiday') {
+              <tr><th>Jour</th><th>Horaires (sans pause)</th><th class="num">Durée</th><th></th></tr>
+            } @else {
+              <tr><th>Jour</th><th>Matin (jusqu'à 12:30)</th><th>Après-midi (dès 13:30)</th><th class="num">Durée</th><th></th></tr>
+            }
           </thead>
           <tbody>
             @for (day of form.controls[week()].controls; track day; let i = $index) {
+              @if (i < labels.length) {
               <tr [formGroup]="day">
                 <td>{{ labels[i] }}</td>
                 <td>
-                  <mat-checkbox formControlName="morning" [aria-label]="labels[i] + ' matin travaillé'" />
+                  <mat-checkbox formControlName="morning" [aria-label]="labels[i] + (week() === 'holiday' ? ' travaillé' : ' matin travaillé')" />
                   @if (day.controls.morning.value) {
                     <input class="time" type="time" step="900" formControlName="morningStart" [attr.aria-label]="labels[i] + ' matin début'" />
                     –
@@ -160,6 +166,7 @@ export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
                     <span class="off">Non travaillé</span>
                   }
                 </td>
+                @if (week() === 'classic') {
                 <td>
                   <mat-checkbox formControlName="afternoon" [aria-label]="labels[i] + ' après-midi travaillé'" />
                   @if (day.controls.afternoon.value) {
@@ -170,13 +177,15 @@ export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
                     <span class="off">Non travaillé</span>
                   }
                 </td>
+                }
                 <td class="num">{{ durations()[i] ? duration(durations()[i]) : '—' }}</td>
                 <td class="error">{{ dayErrors()[i] }}</td>
               </tr>
+              }
             }
           </tbody>
           <tfoot>
-            <tr><td colspan="3" class="total-label">Total de la semaine (pause non comptée)</td>
+            <tr><td [attr.colspan]="week() === 'holiday' ? 2 : 3" class="total-label">Total de la semaine{{ week() === 'classic' ? ' (pause non comptée)' : '' }}</td>
               <td class="num total">{{ duration(total()) }}</td><td></td></tr>
           </tfoot>
         </table>
@@ -199,7 +208,6 @@ export function weekOk(days: DayValue[], weeklyHours: number | null): boolean {
     .week td { padding: 4px 12px 4px 0; height: 44px; }
     .time { font: var(--mat-sys-body-large); padding: 6px 8px; border: 1px solid var(--mat-sys-outline); border-radius: 4px; background: transparent; color: inherit; }
     .weeks { margin: 12px 0 0; }
-    .todo { margin-left: 6px; padding: 2px 8px; border-radius: 10px; font: var(--mat-sys-label-small); color: #7a4100; background: #fef3e0; }
     .off { color: var(--mat-sys-on-surface-variant); font-style: italic; }
     .actions { display: flex; align-items: center; gap: 12px; }
     .hint { color: var(--mat-sys-on-surface-variant); font: var(--mat-sys-body-small); }
@@ -223,19 +231,15 @@ export class TypicalWeekForm implements OnInit {
 
   /** Mode employé : ses propres horaires uniquement. */
   readonly selfOnly = input(false);
-  /** Employé choisi (mode admin), pour afficher ses heures ajoutées à venir à côté. */
-  readonly userChange = output<number>();
 
   protected readonly users = signal<UserSummary[]>([]);
   protected readonly userId = signal<number | null>(null);
   protected readonly loaded = signal(false);
   protected readonly saving = signal(false);
-  protected readonly labels = DAY_LABELS;
+  protected readonly labels = OPEN_DAYS;
   protected readonly name = fullName;
 
   protected readonly week = signal<Week>('classic');
-  /** La semaine de vacances a déjà été enregistrée (sinon elle reprend la classique). */
-  protected readonly holidayFilled = signal(false);
 
   protected readonly form = this.fb.group({
     weeklyHours: this.fb.control<number | null>(35),
@@ -253,25 +257,19 @@ export class TypicalWeekForm implements OnInit {
   );
 
   protected readonly weeklyValid = computed(() => isValidWeeklyHours(this.value().weeklyHours));
-  private readonly shownDays = computed(() => this.value()[this.week()]);
-  protected readonly durations = computed(() => this.shownDays().map((day) => dayMinutes(day)));
-  protected readonly dayErrors = computed(() => this.shownDays().map((day) => dayError(day)));
+  private readonly shownDays = computed(() => this.value()[this.week()].slice(0, OPEN_DAYS.length));
+  protected readonly durations = computed(() => this.shownDays().map((day) => dayMinutes(day, this.week() === 'holiday')));
+  protected readonly dayErrors = computed(() => this.shownDays().map((day) => dayError(day, this.week() === 'holiday')));
   protected readonly total = computed(() => this.durations().reduce((sum, m) => sum + m, 0));
   protected readonly status = computed(() =>
     this.weeklyValid() ? contractStatus(this.total(), this.value().weeklyHours!) : null,
   );
 
-  /** La semaine de vacances est envoyée si elle existe déjà, ou si l'on est en train de la remplir. */
-  private readonly sendHoliday = computed(() => {
-    this.value();
-    return this.holidayFilled() || this.week() === 'holiday' || this.form.controls.holiday.dirty;
-  });
-
   /** Raison qui empêche l'enregistrement (les deux semaines partagent le contrat), ou null. */
   protected readonly blocked = computed(() => {
     const { weeklyHours, classic, holiday } = this.value();
     if (!weekOk(classic, weeklyHours)) return 'La semaine classique doit respecter le contrat pour enregistrer.';
-    if (this.sendHoliday() && !weekOk(holiday, weeklyHours)) {
+    if (!weekOk(holiday, weeklyHours, true)) {
       return 'La semaine de vacances doit respecter le contrat pour enregistrer.';
     }
     return null;
@@ -294,7 +292,6 @@ export class TypicalWeekForm implements OnInit {
 
   protected async select(userId: number): Promise<void> {
     this.userId.set(userId);
-    this.userChange.emit(userId);
     this.loaded.set(false);
     this.week.set('classic');
     try {
@@ -305,11 +302,7 @@ export class TypicalWeekForm implements OnInit {
     }
   }
 
-  /** Semaine de vacances jamais remplie : on part de la semaine classique. */
   protected show(week: Week): void {
-    if (week === 'holiday' && !this.holidayFilled() && !this.form.controls.holiday.dirty) {
-      this.form.controls.holiday.setValue(this.form.controls.classic.getRawValue());
-    }
     this.week.set(week);
   }
 
@@ -323,8 +316,8 @@ export class TypicalWeekForm implements OnInit {
         userId,
         body: {
           weeklyHours: value.weeklyHours!,
-          days: this.toDays(value.classic),
-          holidayDays: this.sendHoliday() ? this.toDays(value.holiday) : null,
+          days: this.toDays(value.classic, false),
+          holidayDays: this.toDays(value.holiday, true),
         },
       });
       this.fill(saved);
@@ -336,22 +329,27 @@ export class TypicalWeekForm implements OnInit {
     }
   }
 
-  private toDays(days: DayValue[]): TypicalDay[] {
-    return days.map((day, i) => ({
-      dayOfWeek: i + 1,
-      morningStart: day.morning ? day.morningStart : null,
-      morningEnd: day.morning ? day.morningEnd : null,
-      afternoonStart: day.afternoon ? day.afternoonStart : null,
-      afternoonEnd: day.afternoon ? day.afternoonEnd : null,
-    }));
+  /** Dimanche toujours non travaillé ; semaine de vacances : une seule plage (champs « matin »). */
+  private toDays(days: DayValue[], holiday: boolean): TypicalDay[] {
+    return days.map((day, i) => {
+      const open = i < OPEN_DAYS.length;
+      const morning = open && day.morning;
+      const afternoon = open && !holiday && day.afternoon;
+      return {
+        dayOfWeek: i + 1,
+        morningStart: morning ? day.morningStart : null,
+        morningEnd: morning ? day.morningEnd : null,
+        afternoonStart: afternoon ? day.afternoonStart : null,
+        afternoonEnd: afternoon ? day.afternoonEnd : null,
+      };
+    });
   }
 
   private fill(schedule: UserSchedule): void {
     this.form.markAsPristine();
     this.form.controls.weeklyHours.setValue(schedule.weeklyHours);
     this.fillWeek('classic', schedule.days);
-    this.fillWeek('holiday', schedule.holidayDays ?? schedule.days);
-    this.holidayFilled.set(schedule.holidayDays != null);
+    this.fillWeek('holiday', schedule.holidayDays);
   }
 
   private fillWeek(week: Week, days: TypicalDay[]): void {
@@ -359,7 +357,7 @@ export class TypicalWeekForm implements OnInit {
       this.form.controls[week].at(day.dayOfWeek - 1).setValue({
         morning: day.morningStart != null,
         morningStart: day.morningStart ?? '09:00',
-        morningEnd: day.morningEnd ?? '12:30',
+        morningEnd: day.morningEnd ?? (week === 'holiday' ? '16:00' : '12:30'),
         afternoon: day.afternoonStart != null,
         afternoonStart: day.afternoonStart ?? '13:30',
         afternoonEnd: day.afternoonEnd ?? '17:00',

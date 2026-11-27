@@ -4,7 +4,7 @@
 import { LocalTime } from '../models/local-time';
 
 /**
- * Journée type, matin (fin ≤ 12:30) et après-midi (début ≥ 13:30), chacun facultatif (null). Aucun = non travaillé.
+ * Journée type. Semaine classique, matin (fin ≤ 12:30) et après-midi (début ≥ 13:30), chacun facultatif (null) ; semaine de vacances, une seule plage dans morningStart/morningEnd (sans pause, après-midi null). Aucun = non travaillé. Dimanche (7) toujours non travaillé.
  */
 export interface TypicalDay {
   afternoonEnd?: (LocalTime | null);

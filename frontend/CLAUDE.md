@@ -6,8 +6,7 @@ src/app
 ├── core/       auth, interceptor HTTP, guards (authGuard, adminGuard), layout
 ├── api/        client GÉNÉRÉ depuis api/openapi.yaml — ne jamais éditer à la main
 ├── features/
-│   ├── planning/      vue planning de tout le monde (FullCalendar)
-│   ├── my-requests/   mes congés + heures sup, formulaires, soldes
+│   ├── planning/      planning de tout le monde : pose des absences / heures sup, horaires types
 │   └── admin/         file de validation, gestion des plannings
 └── shared/     composants réutilisables
 ```

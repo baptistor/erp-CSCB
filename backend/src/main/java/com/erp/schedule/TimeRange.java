@@ -24,7 +24,7 @@ public record TimeRange(LocalTime start, LocalTime end) {
 	}
 
 	/** Les deux plages ont du temps en commun (des plages contiguës ne se chevauchent pas). */
-	boolean overlaps(TimeRange other) {
+	public boolean overlaps(TimeRange other) {
 		return worked() && other.worked() && start.isBefore(other.end) && other.start.isBefore(end);
 	}
 
